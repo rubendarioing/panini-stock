@@ -20,7 +20,7 @@ export default async function DashboardPage() {
       .limit(5),
     supabase
       .from('stock_albums')
-      .select('id, cantidad, albums(nombre, collections(nombre))')
+      .select('id, cantidad, albums(nombre, collection_types(nombre))')
       .lt('cantidad', 3)
       .gt('cantidad', 0)
       .limit(5),
@@ -94,7 +94,7 @@ export default async function DashboardPage() {
                 <div key={item.id} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0">
                   <div>
                     <p className="text-sm font-medium text-gray-900">{item.albums?.nombre}</p>
-                    <p className="text-xs text-gray-400">{item.albums?.collections?.nombre}</p>
+                    <p className="text-xs text-gray-400">{item.albums?.collection_types?.nombre}</p>
                   </div>
                   <span className="inline-flex items-center rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-medium text-red-700">
                     {item.cantidad} restantes

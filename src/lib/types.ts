@@ -14,25 +14,16 @@ export interface CollectionType {
   nombre: string
 }
 
-export interface Collection {
+export interface Album {
   id: number
   type_id: number
   nombre: string
   anio: number
-  descripcion: string | null
+  edicion: string | null
   imagen_url: string | null
+  total_laminas: number
   activo: boolean
   collection_types?: CollectionType
-}
-
-export interface Album {
-  id: number
-  collection_id: number
-  nombre: string
-  edicion: string | null
-  total_laminas: number
-  imagen_url: string | null
-  collections?: Collection
 }
 
 export interface Sticker {
@@ -55,7 +46,7 @@ export interface StockAlbum {
   estado: 'lleno' | 'vacio'
   usuario_id: string
   notas: string | null
-  albums?: Album & { collections?: Collection }
+  albums?: Album
 }
 
 export interface StockSticker {
@@ -68,7 +59,7 @@ export interface StockSticker {
   es_repetida: boolean
   usuario_id: string
   notas: string | null
-  stickers?: Sticker & { albums?: Album & { collections?: Collection } }
+  stickers?: Sticker & { albums?: Album }
 }
 
 export interface Combo {

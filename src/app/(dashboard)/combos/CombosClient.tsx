@@ -28,7 +28,7 @@ export default function CombosClient({ combos, albumStock, stickerStock }: { com
   const router = useRouter()
 
   function getOptions() {
-    if (itemType === 'album') return albumStock.map((s: any) => ({ value: String(s.id), label: `${s.albums?.collections?.nombre} ${s.albums?.collections?.anio} — ${s.albums?.nombre}`, precio: s.precio_venta }))
+    if (itemType === 'album') return albumStock.map((s: any) => ({ value: String(s.id), label: `${s.albums?.collection_types?.nombre} ${s.albums?.anio} — ${s.albums?.nombre}`, precio: s.precio_venta }))
     return stickerStock.map((s: any) => ({ value: String(s.id), label: `#${s.stickers?.numero} — ${s.stickers?.albums?.nombre}`, precio: s.precio_venta }))
   }
 

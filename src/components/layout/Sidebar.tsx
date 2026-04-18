@@ -10,6 +10,8 @@ import {
   Gift,
   Users,
   LogOut,
+  Store,
+  Layers,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { createClient } from '@/lib/supabase/client'
@@ -18,10 +20,12 @@ import { Profile } from '@/lib/types'
 
 const navItems = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
-  { href: '/collections', label: 'Colecciones', icon: BookOpen },
+  { href: '/collections', label: 'Álbumes', icon: BookOpen },
+  { href: '/collections/stickers', label: 'Catálogo láminas', icon: Layers },
   { href: '/inventory', label: 'Inventario', icon: Package },
   { href: '/sales', label: 'Ventas', icon: ShoppingCart },
   { href: '/combos', label: 'Combos', icon: Gift },
+  { href: '/store', label: 'Ver tienda', icon: Store, external: true },
 ]
 
 const adminItems = [
@@ -49,10 +53,11 @@ export default function Sidebar({ profile }: SidebarProps) {
       </div>
 
       <nav className="flex-1 overflow-y-auto px-4 py-4 space-y-1">
-        {navItems.map(({ href, label, icon: Icon }) => (
+        {navItems.map(({ href, label, icon: Icon, external }: any) => (
           <Link
             key={href}
             href={href}
+            target={external ? '_blank' : undefined}
             className={cn(
               'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
               pathname === href

@@ -12,7 +12,7 @@ export default async function InventoryPage() {
   ] = await Promise.all([
     supabase
       .from('stock_albums')
-      .select('precio_venta, cantidad, albums(nombre, collections(nombre))', { count: 'exact' })
+      .select('precio_venta, cantidad, albums(nombre, collection_types(nombre))', { count: 'exact' })
       .gt('cantidad', 0)
       .order('fecha_compra', { ascending: false })
       .limit(5),
@@ -41,7 +41,7 @@ export default async function InventoryPage() {
               <BookOpen className="h-8 w-8" />
             </div>
             <div>
-              <h2 className="text-lg font-semibold text-gray-900">Álbumes completos</h2>
+              <h2 className="text-lg font-semibold text-gray-900">Álbumes y Set a pegar</h2>
               <p className="text-gray-500 text-sm">{albumCount ?? 0} registros activos</p>
               <p className="text-blue-600 font-semibold mt-1">{formatCurrency(albumValue)}</p>
             </div>

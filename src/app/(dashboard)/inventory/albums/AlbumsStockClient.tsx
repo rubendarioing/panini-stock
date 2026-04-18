@@ -10,10 +10,11 @@ import { Badge } from '@/components/ui/badge'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
-import { Plus, Pencil, Trash2, ArrowLeft, Upload, ImageIcon } from 'lucide-react'
+import { Plus, Pencil, Trash2, ArrowLeft, ImageIcon, SlidersHorizontal } from 'lucide-react'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import Link from 'next/link'
 import Image from 'next/image'
+import StockAdjustModal from '@/components/ui/stock-adjust-modal'
 
 const condicionColors: Record<string, string> = {
   nuevo: 'success', sellado: 'default', usado: 'warning',
@@ -32,6 +33,7 @@ export default function AlbumsStockClient({ stock, albums }: { stock: any[]; alb
   const [uploading, setUploading] = useState(false)
   const [loading, setLoading] = useState(false)
   const [filterEstado, setFilterEstado] = useState('all')
+  const [adjustItem, setAdjustItem] = useState<any>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const supabase = createClient()
   const router = useRouter()
@@ -116,11 +118,13 @@ export default function AlbumsStockClient({ stock, albums }: { stock: any[]; alb
   const filtered = stock.filter((s) => {
     if (filterEstado === 'lleno') return s.estado === 'lleno'
     if (filterEstado === 'vacio') return s.estado === 'vacio'
+    if (filterEstado === 'set_a_pegar') return s.estado === 'set_a_pegar'
     return true
   })
 
   const totalLlenos = stock.filter(s => s.estado === 'lleno').reduce((a, s) => a + s.cantidad, 0)
   const totalVacios = stock.filter(s => s.estado === 'vacio').reduce((a, s) => a + s.cantidad, 0)
+  const totalSetAPegar = stock.filter(s => s.estado === 'set_a_pegar').reduce((a, s) => a + s.cantidad, 0)
 
   return (
     <div className="space-y-6">
@@ -135,6 +139,8 @@ export default function AlbumsStockClient({ stock, albums }: { stock: any[]; alb
               <span className="text-green-600 font-medium">{totalLlenos} llenos</span>
               {' · '}
               <span className="text-blue-600 font-medium">{totalVacios} vacíos</span>
+              {' · '}
+              <span className="text-orange-500 font-medium">{totalSetAPegar} set a pegar</span>
             </p>
           </div>
         </div>
@@ -147,6 +153,7 @@ export default function AlbumsStockClient({ stock, albums }: { stock: any[]; alb
             <option value="all">Todos</option>
             <option value="lleno">Llenos</option>
             <option value="vacio">Vacíos</option>
+            <option value="set_a_pegar">Set a Pegar</option>
           </select>
           <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
@@ -164,7 +171,7 @@ export default function AlbumsStockClient({ stock, albums }: { stock: any[]; alb
                     <SelectContent>
                       {albums.map((a) => (
                         <SelectItem key={a.id} value={String(a.id)}>
-                          {a.collections?.nombre} {a.collections?.anio} — {a.nombre}
+                          {a.collection_types?.nombre} — {a.nombre} {a.anio}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -202,6 +209,7 @@ export default function AlbumsStockClient({ stock, albums }: { stock: any[]; alb
                       <SelectContent>
                         <SelectItem value="vacio">Vacío</SelectItem>
                         <SelectItem value="lleno">Lleno</SelectItem>
+                        <SelectItem value="set_a_pegar">Set a Pegar</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -292,13 +300,13 @@ export default function AlbumsStockClient({ stock, albums }: { stock: any[]; alb
                         )}
                         <div>
                           <p className="font-medium text-gray-900">{item.albums?.nombre}</p>
-                          <p className="text-xs text-gray-400">{item.albums?.collections?.nombre} {item.albums?.collections?.anio}</p>
+                          <p className="text-xs text-gray-400">{item.albums?.collection_types?.nombre} — {item.albums?.anio}</p>
                         </div>
                       </div>
                     </td>
                     <td className="px-4 py-3">
-                      <Badge variant={item.estado === 'lleno' ? 'success' : 'secondary'}>
-                        {item.estado === 'lleno' ? 'Lleno' : 'Vacío'}
+                      <Badge variant={item.estado === 'lleno' ? 'success' : item.estado === 'set_a_pegar' ? 'warning' : 'secondary'}>
+                        {item.estado === 'lleno' ? 'Lleno' : item.estado === 'set_a_pegar' ? 'Set a Pegar' : 'Vacío'}
                       </Badge>
                     </td>
                     <td className="px-4 py-3">
@@ -313,6 +321,9 @@ export default function AlbumsStockClient({ stock, albums }: { stock: any[]; alb
                     <td className="px-4 py-3 text-gray-500">{formatDate(item.fecha_compra)}</td>
                     <td className="px-4 py-3">
                       <div className="flex gap-1 justify-end">
+                        <button onClick={() => setAdjustItem(item)} className="p-1.5 text-gray-400 hover:text-green-600 rounded" title="Ajustar stock">
+                          <SlidersHorizontal className="h-4 w-4" />
+                        </button>
                         <button onClick={() => openEdit(item)} className="p-1.5 text-gray-400 hover:text-blue-600 rounded">
                           <Pencil className="h-4 w-4" />
                         </button>
@@ -328,6 +339,21 @@ export default function AlbumsStockClient({ stock, albums }: { stock: any[]; alb
           </table>
         </div>
       </div>
+
+      {adjustItem && (
+        <StockAdjustModal
+          open={!!adjustItem}
+          onClose={() => setAdjustItem(null)}
+          tabla="stock_albums"
+          item={{
+            id: adjustItem.id,
+            cantidad: adjustItem.cantidad,
+            nombre: `${adjustItem.albums?.collection_types?.nombre} — ${adjustItem.albums?.nombre} ${adjustItem.albums?.anio}`,
+            precio_compra: adjustItem.precio_compra,
+            precio_venta: adjustItem.precio_venta,
+          }}
+        />
+      )}
     </div>
   )
 }

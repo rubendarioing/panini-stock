@@ -11,7 +11,7 @@ export default async function CombosPage() {
       .order('nombre'),
     supabase
       .from('stock_albums')
-      .select('id, cantidad, precio_venta, albums(nombre, collections(nombre, anio))')
+      .select('id, cantidad, precio_venta, albums(nombre, anio, collection_types(nombre))')
       .gt('cantidad', 0),
     supabase
       .from('stock_stickers')

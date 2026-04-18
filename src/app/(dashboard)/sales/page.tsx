@@ -7,12 +7,12 @@ export default async function SalesPage() {
   const [{ data: sales }, { data: albumStock }, { data: stickerStock }, { data: combos }] = await Promise.all([
     supabase
       .from('sales')
-      .select('*, sale_items(*), profiles(nombre)')
+      .select('*, sale_items(*), profiles(nombre), clientes(nombre, email, telefono, ciudad, direccion)')
       .order('fecha', { ascending: false })
-      .limit(50),
+      .limit(100),
     supabase
       .from('stock_albums')
-      .select('id, cantidad, precio_venta, albums(nombre, collections(nombre, anio))')
+      .select('id, cantidad, precio_venta, albums(nombre, anio, collection_types(nombre))')
       .gt('cantidad', 0),
     supabase
       .from('stock_stickers')
