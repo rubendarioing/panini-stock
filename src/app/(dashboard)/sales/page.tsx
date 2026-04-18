@@ -1,0 +1,32 @@
+import { createClient } from '@/lib/supabase/server'
+import SalesClient from './SalesClient'
+
+export default async function SalesPage() {
+  const supabase = await createClient()
+
+  const [{ data: sales }, { data: albumStock }, { data: stickerStock }, { data: combos }] = await Promise.all([
+    supabase
+      .from('sales')
+      .select('*, sale_items(*), profiles(nombre)')
+      .order('fecha', { ascending: false })
+      .limit(50),
+    supabase
+      .from('stock_albums')
+      .select('id, cantidad, precio_venta, albums(nombre, collections(nombre, anio))')
+      .gt('cantidad', 0),
+    supabase
+      .from('stock_stickers')
+      .select('id, cantidad, precio_venta, stickers(numero, albums(nombre))')
+      .gt('cantidad', 0),
+    supabase.from('combos').select('id, nombre, precio_total').eq('activo', true),
+  ])
+
+  return (
+    <SalesClient
+      sales={sales ?? []}
+      albumStock={albumStock ?? []}
+      stickerStock={stickerStock ?? []}
+      combos={combos ?? []}
+    />
+  )
+}
