@@ -31,6 +31,7 @@ export interface Album {
   nombre: string
   edicion: string | null
   total_laminas: number
+  imagen_url: string | null
   collections?: Collection
 }
 
@@ -51,6 +52,7 @@ export interface StockAlbum {
   precio_venta: number
   fecha_compra: string
   condicion: 'nuevo' | 'usado' | 'sellado'
+  estado: 'lleno' | 'vacio'
   usuario_id: string
   notas: string | null
   albums?: Album & { collections?: Collection }
