@@ -158,6 +158,15 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
   const cartTotal = cart.reduce((acc, i) => acc + i.precio * i.cantidad, 0)
   const cartCount = cart.reduce((acc, i) => acc + i.cantidad, 0)
 
+  const formValido =
+    customer.nombre.trim() !== '' &&
+    customer.telefono.trim() !== '' &&
+    customer.email.trim() !== '' &&
+    customer.ciudad.trim() !== '' &&
+    customer.direccion.trim() !== '' &&
+    customer.notas.trim() !== '' &&
+    comprobante !== null
+
   function getCartQty(tipo: string, refId: number) {
     return cart.find((i) => i.tipo === tipo && i.referencia_id === refId)?.cantidad ?? 0
   }
@@ -429,37 +438,37 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
             </div>
 
             <form onSubmit={handleOrder} className="p-5 space-y-4 overflow-y-auto flex-1">
-              <p className="text-sm text-gray-500">Completa tus datos para registrar el pedido.</p>
+              <p className="text-sm text-gray-500">Todos los campos son obligatorios excepto las notas y el comprobante.</p>
 
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5 col-span-2">
-                  <Label>Nombre completo *</Label>
+                  <Label>Nombre completo</Label>
                   <Input placeholder="Tu nombre" value={customer.nombre} onChange={(e) => setCustomer({ ...customer, nombre: e.target.value })} required />
                 </div>
                 <div className="space-y-1.5">
-                  <Label>WhatsApp / Teléfono *</Label>
+                  <Label>WhatsApp / Teléfono</Label>
                   <Input placeholder="Ej: 3001234567" value={customer.telefono} onChange={(e) => setCustomer({ ...customer, telefono: e.target.value })} required />
                 </div>
                 <div className="space-y-1.5">
                   <Label>Correo electrónico</Label>
-                  <Input type="email" placeholder="tu@email.com" value={customer.email} onChange={(e) => setCustomer({ ...customer, email: e.target.value })} />
+                  <Input type="email" placeholder="tu@email.com" value={customer.email} onChange={(e) => setCustomer({ ...customer, email: e.target.value })} required />
                 </div>
                 <div className="space-y-1.5">
-                  <Label>Ciudad *</Label>
+                  <Label>Ciudad</Label>
                   <Input placeholder="Tu ciudad" value={customer.ciudad} onChange={(e) => setCustomer({ ...customer, ciudad: e.target.value })} required />
                 </div>
                 <div className="space-y-1.5">
-                  <Label>Dirección de envío *</Label>
+                  <Label>Dirección de envío</Label>
                   <Input placeholder="Calle, barrio..." value={customer.direccion} onChange={(e) => setCustomer({ ...customer, direccion: e.target.value })} required />
                 </div>
                 <div className="space-y-1.5 col-span-2">
-                  <Label>Notas (opcional)</Label>
-                  <Input placeholder="Observaciones adicionales..." value={customer.notas} onChange={(e) => setCustomer({ ...customer, notas: e.target.value })} />
+                  <Label>Notas del pedido</Label>
+                  <Input placeholder="Ej: horario de entrega, indicaciones de acceso..." value={customer.notas} onChange={(e) => setCustomer({ ...customer, notas: e.target.value })} />
                 </div>
               </div>
 
               <div className="space-y-1.5">
-                <Label>Comprobante de pago (opcional)</Label>
+                <Label>Comprobante de pago</Label>
                 <div
                   onClick={() => fileInputRef.current?.click()}
                   className="cursor-pointer border-2 border-dashed border-gray-300 rounded-xl p-4 text-center hover:border-[#003DA5] hover:bg-blue-50 transition-colors"
@@ -482,8 +491,9 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
 
               <button
                 type="submit"
-                disabled={loading}
-                className="w-full bg-[#003DA5] hover:bg-[#002d80] disabled:opacity-60 text-white font-bold py-3 rounded-xl transition-colors text-base"
+                disabled={loading || !formValido}
+                title={!formValido ? 'Completa todos los campos para continuar' : undefined}
+                className="w-full bg-[#003DA5] hover:bg-[#002d80] disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold py-3 rounded-xl transition-colors text-base"
               >
                 {loading ? 'Registrando pedido...' : `Confirmar pedido — ${formatCurrency(cartTotal)}`}
               </button>

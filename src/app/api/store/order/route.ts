@@ -14,7 +14,7 @@ export async function POST(request: Request) {
   const items        = JSON.parse(formData.get('items') as string)
   const comprobante  = formData.get('comprobante') as File | null
 
-  if (!nombre || !telefono || !items?.length) {
+  if (!nombre || !telefono || !email || !ciudad || !direccion || !notas || !items?.length) {
     return NextResponse.json({ error: 'Datos incompletos' }, { status: 400 })
   }
 
@@ -23,21 +23,22 @@ export async function POST(request: Request) {
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   )
 
-  // Crear o reutilizar cliente
+  // Buscar cliente existente por teléfono o correo en una sola consulta
   let clienteId: number | null = null
   const { data: clienteExistente } = await supabase
     .from('clientes')
     .select('id')
     .eq('telefono', telefono)
+    .eq('email', email)
     .maybeSingle()
 
   if (clienteExistente) {
     clienteId = clienteExistente.id
-    await supabase.from('clientes').update({ nombre, email: email || null, ciudad: ciudad || null, direccion: direccion || null }).eq('id', clienteId)
+    await supabase.from('clientes').update({ nombre, email, ciudad, direccion }).eq('id', clienteId)
   } else {
     const { data: nuevoCliente } = await supabase
       .from('clientes')
-      .insert({ nombre, email: email || null, telefono, ciudad: ciudad || null, direccion: direccion || null })
+      .insert({ nombre, email, telefono, ciudad, direccion })
       .select('id')
       .single()
     clienteId = nuevoCliente?.id ?? null
