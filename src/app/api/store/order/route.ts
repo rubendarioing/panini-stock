@@ -39,6 +39,59 @@ export async function POST(request: Request) {
     )
   }
 
+  // Validar stock antes de procesar
+  for (const item of items) {
+    if (item.tipo === 'album') {
+      const { data: s } = await supabase.from('stock_albums').select('cantidad, albums(nombre)').eq('id', item.referencia_id).single()
+      if (!s || s.cantidad < item.cantidad) {
+        const nombre = (s as any)?.albums?.nombre ?? 'álbum'
+        return NextResponse.json({ error: `Stock insuficiente para "${nombre}". Disponible: ${s?.cantidad ?? 0}.` }, { status: 409 })
+      }
+    } else if (item.tipo === 'sticker') {
+      const { data: s } = await supabase.from('stock_stickers').select('cantidad, stickers(numero)').eq('id', item.referencia_id).single()
+      if (!s || s.cantidad < item.cantidad) {
+        const num = (s as any)?.stickers?.numero ?? item.referencia_id
+        return NextResponse.json({ error: `Stock insuficiente para la lámina #${num}. Disponible: ${s?.cantidad ?? 0}.` }, { status: 409 })
+      }
+    } else if (item.tipo === 'accesorio') {
+      const { data: s } = await supabase.from('stock_accesorios').select('cantidad, tipo, albums(nombre)').eq('id', item.referencia_id).single()
+      if (!s || s.cantidad < item.cantidad) {
+        const label = `${(s as any)?.tipo === 'sobre' ? 'Sobre' : 'Caja Sellada'} — ${(s as any)?.albums?.nombre ?? ''}`
+        return NextResponse.json({ error: `Stock insuficiente para "${label.trim()}". Disponible: ${s?.cantidad ?? 0}.` }, { status: 409 })
+      }
+    } else if (item.tipo === 'combo') {
+      const { data: comboItems } = await supabase
+        .from('combo_items')
+        .select('tipo, cantidad, stock_album_id, stock_sticker_id, stock_accesorio_id')
+        .eq('combo_id', item.referencia_id)
+
+      if (comboItems) {
+        for (const ci of comboItems) {
+          const unidades = ci.cantidad * item.cantidad
+          if (ci.tipo === 'album' && ci.stock_album_id) {
+            const { data: s } = await supabase.from('stock_albums').select('cantidad, albums(nombre)').eq('id', ci.stock_album_id).single()
+            if (!s || s.cantidad < unidades) {
+              const nombre = (s as any)?.albums?.nombre ?? 'álbum del combo'
+              return NextResponse.json({ error: `Stock insuficiente para "${nombre}" (componente del combo). Disponible: ${s?.cantidad ?? 0}.` }, { status: 409 })
+            }
+          } else if (ci.tipo === 'sticker' && ci.stock_sticker_id) {
+            const { data: s } = await supabase.from('stock_stickers').select('cantidad, stickers(numero)').eq('id', ci.stock_sticker_id).single()
+            if (!s || s.cantidad < unidades) {
+              const num = (s as any)?.stickers?.numero ?? ci.stock_sticker_id
+              return NextResponse.json({ error: `Stock insuficiente para la lámina #${num} (componente del combo). Disponible: ${s?.cantidad ?? 0}.` }, { status: 409 })
+            }
+          } else if (ci.tipo === 'accesorio' && ci.stock_accesorio_id) {
+            const { data: s } = await supabase.from('stock_accesorios').select('cantidad, tipo, albums(nombre)').eq('id', ci.stock_accesorio_id).single()
+            if (!s || s.cantidad < unidades) {
+              const label = `${(s as any)?.tipo === 'sobre' ? 'Sobre' : 'Caja Sellada'} — ${(s as any)?.albums?.nombre ?? ''}`
+              return NextResponse.json({ error: `Stock insuficiente para "${label.trim()}" (componente del combo). Disponible: ${s?.cantidad ?? 0}.` }, { status: 409 })
+            }
+          }
+        }
+      }
+    }
+  }
+
   // Buscar cliente existente por teléfono o correo en una sola consulta
   let clienteId: number | null = null
   const { data: clienteExistente } = await supabase
@@ -122,11 +175,49 @@ export async function POST(request: Request) {
 
   // Descontar stock
   for (const item of items) {
-    const tabla = item.tipo === 'album' ? 'stock_albums' : item.tipo === 'sticker' ? 'stock_stickers' : null
-    if (!tabla) continue
-    const { data: current } = await supabase.from(tabla).select('cantidad').eq('id', item.referencia_id).single()
-    if (current) {
-      await supabase.from(tabla).update({ cantidad: Math.max(0, current.cantidad - item.cantidad) }).eq('id', item.referencia_id)
+    if (item.tipo === 'album') {
+      const { data: current } = await supabase.from('stock_albums').select('cantidad').eq('id', item.referencia_id).single()
+      if (current) {
+        await supabase.from('stock_albums').update({ cantidad: Math.max(0, current.cantidad - item.cantidad) }).eq('id', item.referencia_id)
+      }
+    } else if (item.tipo === 'sticker') {
+      const { data: current } = await supabase.from('stock_stickers').select('cantidad').eq('id', item.referencia_id).single()
+      if (current) {
+        await supabase.from('stock_stickers').update({ cantidad: Math.max(0, current.cantidad - item.cantidad) }).eq('id', item.referencia_id)
+      }
+    } else if (item.tipo === 'accesorio') {
+      const { data: current } = await supabase.from('stock_accesorios').select('cantidad').eq('id', item.referencia_id).single()
+      if (current) {
+        await supabase.from('stock_accesorios').update({ cantidad: Math.max(0, current.cantidad - item.cantidad) }).eq('id', item.referencia_id)
+      }
+    } else if (item.tipo === 'combo') {
+      // Descontar el stock de cada componente del combo
+      const { data: comboItems } = await supabase
+        .from('combo_items')
+        .select('tipo, cantidad, stock_album_id, stock_sticker_id, stock_accesorio_id')
+        .eq('combo_id', item.referencia_id)
+
+      if (comboItems) {
+        for (const ci of comboItems) {
+          const unidades = ci.cantidad * item.cantidad
+          if (ci.tipo === 'album' && ci.stock_album_id) {
+            const { data: current } = await supabase.from('stock_albums').select('cantidad').eq('id', ci.stock_album_id).single()
+            if (current) {
+              await supabase.from('stock_albums').update({ cantidad: Math.max(0, current.cantidad - unidades) }).eq('id', ci.stock_album_id)
+            }
+          } else if (ci.tipo === 'sticker' && ci.stock_sticker_id) {
+            const { data: current } = await supabase.from('stock_stickers').select('cantidad').eq('id', ci.stock_sticker_id).single()
+            if (current) {
+              await supabase.from('stock_stickers').update({ cantidad: Math.max(0, current.cantidad - unidades) }).eq('id', ci.stock_sticker_id)
+            }
+          } else if (ci.tipo === 'accesorio' && ci.stock_accesorio_id) {
+            const { data: current } = await supabase.from('stock_accesorios').select('cantidad').eq('id', ci.stock_accesorio_id).single()
+            if (current) {
+              await supabase.from('stock_accesorios').update({ cantidad: Math.max(0, current.cantidad - unidades) }).eq('id', ci.stock_accesorio_id)
+            }
+          }
+        }
+      }
     }
   }
 

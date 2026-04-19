@@ -4,7 +4,7 @@ import SalesClient from './SalesClient'
 export default async function SalesPage() {
   const supabase = await createClient()
 
-  const [{ data: sales }, { data: albumStock }, { data: stickerStock }, { data: combos }] = await Promise.all([
+  const [{ data: sales }, { data: albumStock }, { data: stickerStock }, { data: combos }, { data: accesorioStock }] = await Promise.all([
     supabase
       .from('sales')
       .select('*, sale_items(*), profiles(nombre), clientes(nombre, email, telefono, ciudad, direccion)')
@@ -17,6 +17,9 @@ export default async function SalesPage() {
       .from('stock_stickers')
       .select('id, cantidad, precio_venta, stickers(numero, descripcion, albums(nombre))'),
     supabase.from('combos').select('id, nombre, precio_total').eq('activo', true),
+    supabase
+      .from('stock_accesorios')
+      .select('id, tipo, cantidad_contenido, albums(nombre, anio)'),
   ])
 
   return (
@@ -25,6 +28,7 @@ export default async function SalesPage() {
       albumStock={albumStock ?? []}
       stickerStock={stickerStock ?? []}
       combos={combos ?? []}
+      accesorioStock={accesorioStock ?? []}
     />
   )
 }

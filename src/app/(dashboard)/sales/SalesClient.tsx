@@ -34,8 +34,8 @@ const metodoBadge: Record<string, string> = {
   efectivo: 'success', transferencia: 'default', otro: 'secondary',
 }
 
-export default function SalesClient({ sales, albumStock, stickerStock, combos }: {
-  sales: any[]; albumStock: any[]; stickerStock: any[]; combos: any[]
+export default function SalesClient({ sales, albumStock, stickerStock, combos, accesorioStock }: {
+  sales: any[]; albumStock: any[]; stickerStock: any[]; combos: any[]; accesorioStock: any[]
 }) {
   const [open, setOpen] = useState(false)
   const [detailSale, setDetailSale] = useState<any>(null)
@@ -55,6 +55,7 @@ export default function SalesClient({ sales, albumStock, stickerStock, combos }:
   function getItemOptions() {
     if (itemType === 'album') return albumStock.map((s: any) => ({ value: String(s.id), label: `${s.albums?.collection_types?.nombre} ${s.albums?.anio} — ${s.albums?.nombre} (${s.cantidad} disp.)`, precio: s.precio_venta, max: s.cantidad }))
     if (itemType === 'sticker') return stickerStock.map((s: any) => ({ value: String(s.id), label: `#${s.stickers?.numero} — ${s.stickers?.albums?.nombre} (${s.cantidad} disp.)`, precio: s.precio_venta, max: s.cantidad }))
+    if (itemType === 'accesorio') return accesorioStock.map((s: any) => ({ value: String(s.id), label: `${s.tipo === 'sobre' ? 'Sobre' : 'Caja Sellada'}${s.cantidad_contenido ? ` (${s.cantidad_contenido} ${s.tipo === 'sobre' ? 'láminas' : 'sobres'})` : ''} — ${s.albums?.nombre} ${s.albums?.anio} (${s.cantidad} disp.)`, precio: s.precio_venta, max: s.cantidad }))
     return combos.map((c: any) => ({ value: String(c.id), label: c.nombre, precio: c.precio_total, max: 999 }))
   }
 
@@ -125,6 +126,10 @@ export default function SalesClient({ sales, albumStock, stickerStock, combos }:
   }
 
   async function cancelarVenta(sale: any) {
+    if (sale.estado !== 'pendiente') {
+      alert('Solo se pueden cancelar ventas en estado pendiente.')
+      return
+    }
     if (!confirm('¿Cancelar esta venta?')) return
     await supabase.from('sales').update({ estado: 'cancelado' }).eq('id', sale.id)
     router.refresh()
@@ -136,6 +141,13 @@ export default function SalesClient({ sales, albumStock, stickerStock, combos }:
       if (!s) return 'Álbum'
       const estadoLabel = s.estado === 'lleno' ? 'Lleno' : s.estado === 'set_a_pegar' ? 'Set a Pegar' : 'Vacío'
       return `${s.albums?.nombre} ${s.albums?.anio} — ${estadoLabel}`
+    }
+    if (item.tipo === 'accesorio') {
+      const s = accesorioStock.find((a: any) => a.id === item.referencia_id)
+      if (!s) return 'Accesorio'
+      const tipoLabel = s.tipo === 'sobre' ? 'Sobre' : 'Caja Sellada'
+      const contenido = s.cantidad_contenido ? ` · ${s.cantidad_contenido} ${s.tipo === 'sobre' ? 'láminas' : 'sobres'}` : ''
+      return `${tipoLabel}${contenido} — ${s.albums?.nombre} ${s.albums?.anio}`
     }
     if (item.tipo === 'sticker') {
       const s = stickerStock.find((a: any) => a.id === item.referencia_id)
@@ -196,6 +208,7 @@ export default function SalesClient({ sales, albumStock, stickerStock, combos }:
                       <SelectContent>
                         <SelectItem value="album">Álbum</SelectItem>
                         <SelectItem value="sticker">Lámina</SelectItem>
+                        <SelectItem value="accesorio">Accesorio</SelectItem>
                         <SelectItem value="combo">Combo</SelectItem>
                       </SelectContent>
                     </Select>
@@ -341,7 +354,7 @@ export default function SalesClient({ sales, albumStock, stickerStock, combos }:
                         >
                           <Eye className="h-4 w-4" />
                         </button>
-                        {sale.estado !== 'cancelado' && sale.estado !== 'entregado' && (
+                        {sale.estado === 'pendiente' && (
                           <button
                             onClick={() => cancelarVenta(sale)}
                             className="px-2 py-1 text-xs font-medium text-red-500 hover:bg-red-50 rounded transition-colors"

@@ -9,10 +9,11 @@ export default async function StorePage() {
     { data: stickerStock },
     { data: combos },
     { data: collectionTypes },
+    { data: accesorioStock },
   ] = await Promise.all([
     supabase
       .from('stock_albums')
-      .select('id, cantidad, precio_venta, estado, condicion, albums(id, nombre, imagen_url, edicion, total_laminas, anio, type_id, collection_types(nombre, id))')
+      .select('id, cantidad, precio_venta, estado, condicion, notas, albums(id, nombre, imagen_url, edicion, total_laminas, anio, type_id, collection_types(nombre, id))')
       .gt('cantidad', 0)
       .order('id'),
     supabase
@@ -22,12 +23,17 @@ export default async function StorePage() {
       .order('id'),
     supabase
       .from('combos')
-      .select('id, nombre, descripcion, precio_total')
+      .select('id, nombre, descripcion, precio_total, imagen_url')
       .eq('activo', true),
     supabase
       .from('collection_types')
       .select('*')
       .order('nombre'),
+    supabase
+      .from('stock_accesorios')
+      .select('id, cantidad, precio_venta, tipo, cantidad_contenido, imagen_url, notas, albums(id, nombre, imagen_url, anio, collection_types(nombre))')
+      .gt('cantidad', 0)
+      .order('id'),
   ])
 
   return (
@@ -36,6 +42,7 @@ export default async function StorePage() {
       stickerStock={stickerStock ?? []}
       combos={combos ?? []}
       collectionTypes={collectionTypes ?? []}
+      accesorioStock={accesorioStock ?? []}
     />
   )
 }

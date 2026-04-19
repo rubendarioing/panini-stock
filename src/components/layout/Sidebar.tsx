@@ -5,13 +5,13 @@ import { usePathname } from 'next/navigation'
 import {
   LayoutDashboard,
   BookOpen,
-  Package,
   ShoppingCart,
   Gift,
   Users,
   LogOut,
   Store,
   Layers,
+  Archive,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { createClient } from '@/lib/supabase/client'
@@ -22,7 +22,9 @@ const navItems = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/collections', label: 'Álbumes', icon: BookOpen },
   { href: '/collections/stickers', label: 'Catálogo láminas', icon: Layers },
-  { href: '/inventory', label: 'Inventario', icon: Package },
+  { href: '/inventory/albums', label: 'Álbumes y Set a Pegar', icon: BookOpen },
+  { href: '/inventory/stickers', label: 'Láminas sueltas', icon: Layers },
+  { href: '/inventory/accesorios', label: 'Sobres y cajas', icon: Archive },
   { href: '/sales', label: 'Ventas', icon: ShoppingCart },
   { href: '/combos', label: 'Combos', icon: Gift },
   { href: '/store', label: 'Ver tienda', icon: Store, external: true },

@@ -19,11 +19,12 @@ interface CartItem {
   stock_disponible: number
 }
 
-export default function StoreClient({ albumStock, stickerStock, combos, collectionTypes }: {
+export default function StoreClient({ albumStock, stickerStock, combos, collectionTypes, accesorioStock }: {
   albumStock: any[]
   stickerStock: any[]
   combos: any[]
   collectionTypes: any[]
+  accesorioStock: any[]
 }) {
   const [cart, setCart] = useState<CartItem[]>([])
   const [cartOpen, setCartOpen] = useState(false)
@@ -44,6 +45,8 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
     const list: any[] = []
 
     albumStock.forEach((s) => {
+      const badge = s.estado === 'lleno' ? 'Lleno' : s.estado === 'set_a_pegar' ? 'Set a Pegar' : 'Vacío'
+      const badgeVariant = s.estado === 'lleno' ? 'success' : s.estado === 'set_a_pegar' ? 'warning' : 'secondary'
       list.push({
         id: `album-${s.id}`,
         tipo: 'album',
@@ -53,11 +56,33 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
         categoria: s.albums?.collection_types?.nombre ?? 'Otros',
         type_id: s.albums?.type_id,
         imagen_url: s.albums?.imagen_url,
+        notas: s.notas ?? '',
         precio: s.precio_venta,
         stock: s.cantidad,
-        estado: s.estado,
-        badge: s.estado === 'lleno' ? 'Lleno' : s.estado === 'set_a_pegar' ? 'Set a Pegar' : 'Vacío',
-        badgeVariant: s.estado === 'lleno' ? 'success' : s.estado === 'set_a_pegar' ? 'warning' : 'secondary',
+        badge,
+        badgeVariant,
+      })
+    })
+
+    accesorioStock.forEach((s) => {
+      const esSobre = s.tipo === 'sobre'
+      const badge = s.cantidad_contenido
+        ? `${esSobre ? 'Sobre' : 'Caja'} · ${s.cantidad_contenido} ${esSobre ? 'láminas' : 'sobres'}`
+        : esSobre ? 'Sobre' : 'Caja Sellada'
+      list.push({
+        id: `accesorio-${s.id}`,
+        tipo: 'accesorio',
+        referencia_id: s.id,
+        label: s.albums?.nombre ?? 'Accesorio',
+        sublabel: `${esSobre ? 'Sobre' : 'Caja Sellada'} — ${s.albums?.collection_types?.nombre ?? ''} ${s.albums?.anio ?? ''}`.trim(),
+        categoria: esSobre ? 'Sobres' : 'Cajas Selladas',
+        type_id: null,
+        imagen_url: s.imagen_url ?? s.albums?.imagen_url ?? null,
+        notas: s.notas ?? '',
+        precio: s.precio_venta,
+        stock: s.cantidad,
+        badge,
+        badgeVariant: esSobre ? 'secondary' : 'warning',
       })
     })
 
@@ -89,7 +114,7 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
         sublabel: c.descripcion,
         categoria: 'Combos',
         type_id: null,
-        imagen_url: null,
+        imagen_url: c.imagen_url ?? null,
         precio: c.precio_total,
         stock: 999,
         badge: 'Combo',
@@ -103,9 +128,13 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
   const categories = [
     { value: 'all', label: 'Todo' },
     ...collectionTypes.map((t: any) => ({ value: t.nombre, label: t.nombre })),
+    { value: 'Sobres', label: 'Sobres' },
+    { value: 'Cajas Selladas', label: 'Cajas Selladas' },
     { value: 'Láminas', label: 'Láminas' },
     { value: 'Combos', label: 'Combos' },
   ]
+
+
 
   const filtered = products.filter((p) => {
     const q = search.toLowerCase()
@@ -306,6 +335,7 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
                 <div className="p-3 flex flex-col flex-1">
                   <p className="font-semibold text-gray-900 text-sm leading-tight line-clamp-2">{product.label}</p>
                   {product.sublabel && <p className="text-xs text-gray-400 mt-0.5 line-clamp-1">{product.sublabel}</p>}
+                  {product.notas && <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">{product.notas}</p>}
                   <div className="mt-auto pt-2">
                     <p className="text-lg font-bold text-[#003DA5]">{formatCurrency(product.precio)}</p>
                     {product.stock < 999 && <p className="text-xs text-gray-400">{product.stock} disponibles</p>}
