@@ -3,7 +3,6 @@
 import { useState, useMemo, useRef } from 'react'
 import Image from 'next/image'
 import { ShoppingCart, X, Plus, Minus, BookOpen, Layers, Package2, Search, CheckCircle, Upload } from 'lucide-react'
-import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
@@ -56,7 +55,6 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
         precio: s.precio_venta,
         stock: s.cantidad,
         estado: s.estado,
-        condicion: s.condicion,
         badge: s.estado === 'lleno' ? 'Lleno' : s.estado === 'set_a_pegar' ? 'Set a Pegar' : 'Vacío',
         badgeVariant: s.estado === 'lleno' ? 'success' : s.estado === 'set_a_pegar' ? 'warning' : 'secondary',
       })
@@ -200,210 +198,150 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
 
   if (orderDone) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen text-center bg-gray-100 px-4">
-        <div className="bg-white rounded-2xl shadow-lg p-10 max-w-md w-full">
-          <CheckCircle className="h-16 w-16 text-green-500 mx-auto mb-4" />
-          <h2 className="text-2xl font-bold text-gray-900 mb-2">¡Pedido registrado!</h2>
-          <p className="text-gray-500 mb-1">Tu número de pedido es:</p>
-          <p className="text-3xl font-bold text-blue-700 mb-4">#{orderNumber}</p>
-          <p className="text-gray-500 max-w-sm mx-auto mb-8">
-            Nos pondremos en contacto contigo pronto para coordinar la entrega.
-          </p>
-          <Button
-            className="bg-[#003DA5] hover:bg-[#002d80] text-white w-full"
-            onClick={() => {
-              setOrderDone(false)
-              setCustomer({ nombre: '', email: '', telefono: '', ciudad: '', direccion: '', notas: '' })
-              setComprobante(null)
-            }}
-          >
-            Seguir comprando
-          </Button>
-        </div>
+      <div className="flex flex-col items-center justify-center min-h-[60vh] text-center">
+        <CheckCircle className="h-16 w-16 text-green-500 mb-4" />
+        <h2 className="text-2xl font-bold text-gray-900 mb-2">¡Pedido registrado!</h2>
+        <p className="text-gray-500 mb-1">Tu número de pedido es:</p>
+        <p className="text-3xl font-bold text-[#003DA5] mb-4">#{orderNumber}</p>
+        <p className="text-gray-500 max-w-sm mb-8">
+          Nos pondremos en contacto contigo pronto para coordinar la entrega.
+        </p>
+        <button
+          onClick={() => {
+            setOrderDone(false)
+            setCustomer({ nombre: '', email: '', telefono: '', ciudad: '', direccion: '', notas: '' })
+            setComprobante(null)
+          }}
+          className="bg-[#003DA5] hover:bg-[#002d80] text-white font-semibold px-6 py-2.5 rounded-lg transition-colors"
+        >
+          Seguir comprando
+        </button>
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen bg-gray-100 flex flex-col">
-      {/* Barra de anuncio roja */}
-      <div className="bg-[#E30613] text-white text-center text-sm py-2 px-4 font-medium tracking-wide">
-        🚀 Envío disponible a todo el país — ¡Consulta disponibilidad!
+    <div className="relative">
+      {/* Título */}
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold text-gray-900">Catálogo</h1>
+        <p className="text-gray-500 text-sm mt-0.5">Álbumes, láminas y combos de tus torneos favoritos</p>
       </div>
 
-      {/* Header azul */}
-      <header className="bg-[#003DA5] sticky top-0 z-40 shadow-md">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center gap-4 h-16">
-            {/* Buscador */}
-            <div className="relative flex-1 max-w-xs hidden sm:block">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-              <input
-                type="text"
-                placeholder="Buscar álbum, lámina..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="w-full pl-9 pr-3 py-2 rounded-full text-sm bg-white/10 text-white placeholder-blue-200 border border-blue-300/40 focus:outline-none focus:bg-white/20 transition"
-              />
-            </div>
-
-            {/* Logo centrado */}
-            <div className="flex-1 flex justify-center">
-              <div className="bg-[#FFD600] px-4 py-1 rounded font-black text-[#E30613] text-2xl tracking-widest select-none shadow">
-                PANINI
-              </div>
-            </div>
-
-            {/* Derecha: admin + carrito */}
-            <div className="flex items-center gap-3">
-              <a
-                href="/login"
-                className="hidden sm:inline text-xs text-blue-200 hover:text-white transition-colors"
-              >
-                Administración →
-              </a>
-              <button
-                onClick={() => setCartOpen(true)}
-                className="relative flex items-center gap-2 bg-white/10 hover:bg-white/20 text-white rounded-full px-4 py-2 text-sm font-medium transition border border-white/20"
-              >
-                <ShoppingCart className="h-4 w-4" />
-                {cartCount > 0 && (
-                  <span className="absolute -top-1.5 -right-1.5 bg-[#E30613] text-white text-xs rounded-full h-5 w-5 flex items-center justify-center font-bold">
-                    {cartCount}
-                  </span>
-                )}
-                <span className="hidden sm:inline">Carrito</span>
-                {cartCount > 0 && (
-                  <span className="hidden sm:inline font-bold">{formatCurrency(cartTotal)}</span>
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* Barra de categorías */}
-        <div className="bg-[#002d80] border-t border-blue-700/50">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 overflow-x-auto">
-            <div className="flex items-center gap-1 h-10 whitespace-nowrap">
-              {categories.map((cat) => (
-                <button
-                  key={cat.value}
-                  onClick={() => setFilterCategory(cat.value)}
-                  className={`px-4 h-full text-sm font-medium transition-colors flex-shrink-0 ${
-                    filterCategory === cat.value
-                      ? 'bg-[#FFD600] text-[#003DA5] font-bold'
-                      : 'text-blue-100 hover:text-white hover:bg-white/10'
-                  }`}
-                >
-                  {cat.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-      </header>
-
-      {/* Buscador mobile */}
-      <div className="sm:hidden px-4 pt-4 bg-gray-100">
-        <div className="relative">
+      {/* Buscador + filtros */}
+      <div className="flex flex-col sm:flex-row gap-3 mb-6">
+        <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-          <input
-            type="text"
-            placeholder="Buscar álbum, lámina..."
+          <Input
+            placeholder="Buscar producto..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full pl-9 pr-3 py-2.5 rounded-xl text-sm bg-white border border-gray-200 focus:outline-none focus:border-blue-400 shadow-sm"
+            className="pl-9"
           />
+        </div>
+        <div className="flex gap-2 flex-wrap">
+          {categories.map((cat) => (
+            <button
+              key={cat.value}
+              onClick={() => setFilterCategory(cat.value)}
+              className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                filterCategory === cat.value
+                  ? 'bg-[#003DA5] text-white'
+                  : 'bg-white text-gray-600 border border-gray-200 hover:border-[#003DA5] hover:text-[#003DA5]'
+              }`}
+            >
+              {cat.label}
+            </button>
+          ))}
         </div>
       </div>
 
-      {/* Contenido principal */}
-      <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-6">
-        {filtered.length === 0 ? (
-          <div className="text-center py-20 text-gray-400">
-            <Search className="h-12 w-12 mx-auto mb-3 opacity-30" />
-            <p className="text-lg">No se encontraron productos</p>
-            <p className="text-sm mt-1">Intenta con otro término o categoría</p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
-            {filtered.map((product) => {
-              const inCart = getCartQty(product.tipo, product.referencia_id)
-              return (
-                <div
-                  key={product.id}
-                  className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden flex flex-col hover:shadow-md hover:-translate-y-0.5 hover:border-blue-200 transition-all duration-150"
-                >
-                  <div className="relative bg-gray-100 aspect-[3/4]">
-                    {product.imagen_url ? (
-                      <Image src={product.imagen_url} alt={product.label} fill className="object-cover" unoptimized />
-                    ) : (
-                      <div className="h-full flex flex-col items-center justify-center text-gray-300 gap-2">
-                        {product.tipo === 'album' && <BookOpen className="h-10 w-10" />}
-                        {product.tipo === 'sticker' && <Layers className="h-10 w-10" />}
-                        {product.tipo === 'combo' && <Package2 className="h-10 w-10" />}
-                      </div>
-                    )}
-                    <div className="absolute top-2 left-2">
-                      <Badge variant={product.badgeVariant as any} className="text-xs shadow-sm">{product.badge}</Badge>
+      {/* Grid de productos */}
+      {filtered.length === 0 ? (
+        <div className="text-center py-16 text-gray-400">
+          <Search className="h-12 w-12 mx-auto mb-3 opacity-30" />
+          <p>No se encontraron productos</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+          {filtered.map((product) => {
+            const inCart = getCartQty(product.tipo, product.referencia_id)
+            return (
+              <div key={product.id} className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden flex flex-col hover:shadow-md hover:border-blue-200 transition-all">
+                <div className="relative bg-gray-100 aspect-[3/4]">
+                  {product.imagen_url ? (
+                    <Image src={product.imagen_url} alt={product.label} fill className="object-cover" unoptimized />
+                  ) : (
+                    <div className="h-full flex flex-col items-center justify-center text-gray-300 gap-2">
+                      {product.tipo === 'album' && <BookOpen className="h-10 w-10" />}
+                      {product.tipo === 'sticker' && <Layers className="h-10 w-10" />}
+                      {product.tipo === 'combo' && <Package2 className="h-10 w-10" />}
                     </div>
-                    {product.stock < 5 && product.stock < 999 && (
-                      <div className="absolute top-2 right-2">
-                        <Badge variant="destructive" className="text-xs shadow-sm">¡Últimas!</Badge>
-                      </div>
-                    )}
+                  )}
+                  <div className="absolute top-2 left-2">
+                    <Badge variant={product.badgeVariant as any} className="text-xs">{product.badge}</Badge>
                   </div>
-                  <div className="p-3 flex flex-col flex-1">
-                    <p className="font-semibold text-gray-900 text-sm leading-tight line-clamp-2">{product.label}</p>
-                    {product.sublabel && <p className="text-xs text-gray-400 mt-0.5 line-clamp-1">{product.sublabel}</p>}
-                    <div className="mt-auto pt-2">
-                      <p className="text-lg font-bold text-[#003DA5]">{formatCurrency(product.precio)}</p>
-                      {product.stock < 999 && (
-                        <p className="text-xs text-gray-400">{product.stock} disponibles</p>
-                      )}
-                      {inCart === 0 ? (
-                        <button
-                          onClick={() => addToCart(product)}
-                          className="mt-2 w-full bg-[#003DA5] hover:bg-[#002d80] text-white text-sm font-medium py-2 rounded-lg transition-colors flex items-center justify-center gap-1.5"
-                        >
-                          <ShoppingCart className="h-4 w-4" /> Agregar
-                        </button>
-                      ) : (
-                        <div className="mt-2 flex items-center justify-between bg-blue-50 border border-blue-200 rounded-lg px-2 py-1">
-                          <button
-                            onClick={() => {
-                              const idx = cart.findIndex(i => i.tipo === product.tipo && i.referencia_id === product.referencia_id)
-                              updateQty(idx, -1)
-                            }}
-                            className="p-1 text-[#003DA5] hover:bg-blue-100 rounded"
-                          >
-                            <Minus className="h-4 w-4" />
-                          </button>
-                          <span className="text-[#003DA5] font-bold text-sm">{inCart}</span>
-                          <button onClick={() => addToCart(product)} className="p-1 text-[#003DA5] hover:bg-blue-100 rounded">
-                            <Plus className="h-4 w-4" />
-                          </button>
-                        </div>
-                      )}
+                  {product.stock < 5 && product.stock < 999 && (
+                    <div className="absolute top-2 right-2">
+                      <Badge variant="destructive" className="text-xs">¡Últimas!</Badge>
                     </div>
+                  )}
+                </div>
+                <div className="p-3 flex flex-col flex-1">
+                  <p className="font-semibold text-gray-900 text-sm leading-tight line-clamp-2">{product.label}</p>
+                  {product.sublabel && <p className="text-xs text-gray-400 mt-0.5 line-clamp-1">{product.sublabel}</p>}
+                  <div className="mt-auto pt-2">
+                    <p className="text-lg font-bold text-[#003DA5]">{formatCurrency(product.precio)}</p>
+                    {product.stock < 999 && <p className="text-xs text-gray-400">{product.stock} disponibles</p>}
+                    {inCart === 0 ? (
+                      <button
+                        onClick={() => addToCart(product)}
+                        className="mt-2 w-full bg-[#003DA5] hover:bg-[#002d80] text-white text-sm font-medium py-2 rounded-lg transition-colors flex items-center justify-center gap-1"
+                      >
+                        <ShoppingCart className="h-4 w-4" /> Agregar
+                      </button>
+                    ) : (
+                      <div className="mt-2 flex items-center justify-between bg-blue-50 border border-blue-200 rounded-lg px-2 py-1">
+                        <button
+                          onClick={() => {
+                            const idx = cart.findIndex(i => i.tipo === product.tipo && i.referencia_id === product.referencia_id)
+                            updateQty(idx, -1)
+                          }}
+                          className="p-1 text-[#003DA5] hover:bg-blue-100 rounded"
+                        >
+                          <Minus className="h-4 w-4" />
+                        </button>
+                        <span className="text-[#003DA5] font-bold text-sm">{inCart}</span>
+                        <button onClick={() => addToCart(product)} className="p-1 text-[#003DA5] hover:bg-blue-100 rounded">
+                          <Plus className="h-4 w-4" />
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
-              )
-            })}
-          </div>
-        )}
-      </main>
+              </div>
+            )
+          })}
+        </div>
+      )}
 
-      {/* Footer */}
-      <footer className="bg-[#003DA5] text-blue-200 text-center text-sm py-5 mt-8">
-        <span className="font-bold text-[#FFD600]">PANINI</span> Stock &copy; {new Date().getFullYear()} — Todos los derechos reservados
-      </footer>
+      {/* Botón flotante carrito */}
+      {cartCount > 0 && !cartOpen && !checkoutOpen && (
+        <button
+          onClick={() => setCartOpen(true)}
+          className="fixed bottom-6 right-6 bg-[#003DA5] hover:bg-[#002d80] text-white rounded-full px-5 py-3 shadow-lg flex items-center gap-3 transition-all z-50"
+        >
+          <ShoppingCart className="h-5 w-5" />
+          <span className="font-semibold">{cartCount} {cartCount === 1 ? 'item' : 'items'}</span>
+          <span className="font-bold">{formatCurrency(cartTotal)}</span>
+        </button>
+      )}
 
       {/* Panel carrito lateral */}
       {cartOpen && (
         <div className="fixed inset-0 z-50 flex justify-end">
-          <div className="absolute inset-0 bg-black/50" onClick={() => setCartOpen(false)} />
-          <div className="relative bg-white w-full max-w-sm flex flex-col shadow-2xl">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setCartOpen(false)} />
+          <div className="relative bg-white w-full max-w-sm flex flex-col shadow-xl">
             <div className="flex items-center justify-between p-4 border-b bg-[#003DA5] text-white">
               <h2 className="text-lg font-bold flex items-center gap-2">
                 <ShoppingCart className="h-5 w-5" /> Tu carrito
@@ -445,23 +383,21 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
                 </div>
               ))}
             </div>
-            {cart.length > 0 && (
-              <div className="border-t p-4 space-y-3 bg-gray-50">
-                <div className="flex justify-between items-center">
-                  <span className="text-gray-600 text-sm">Total ({cartCount} {cartCount === 1 ? 'item' : 'items'})</span>
-                  <span className="text-xl font-bold text-[#003DA5]">{formatCurrency(cartTotal)}</span>
-                </div>
-                <button
-                  onClick={() => { setCartOpen(false); setCheckoutOpen(true) }}
-                  className="w-full bg-[#003DA5] hover:bg-[#002d80] text-white font-semibold py-3 rounded-xl transition-colors"
-                >
-                  Finalizar pedido
-                </button>
-                <button onClick={() => setCartOpen(false)} className="w-full text-sm text-gray-500 hover:text-gray-700 py-1">
-                  Seguir comprando
-                </button>
+            <div className="border-t p-4 space-y-3 bg-gray-50">
+              <div className="flex justify-between items-center">
+                <span className="text-gray-600 text-sm">Total ({cartCount} {cartCount === 1 ? 'item' : 'items'})</span>
+                <span className="text-xl font-bold text-[#003DA5]">{formatCurrency(cartTotal)}</span>
               </div>
-            )}
+              <button
+                onClick={() => { setCartOpen(false); setCheckoutOpen(true) }}
+                className="w-full bg-[#003DA5] hover:bg-[#002d80] text-white font-semibold py-3 rounded-xl transition-colors"
+              >
+                Finalizar pedido
+              </button>
+              <button onClick={() => setCartOpen(false)} className="w-full text-sm text-gray-500 hover:text-gray-700 py-1">
+                Seguir comprando
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -469,7 +405,7 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
       {/* Modal checkout */}
       {checkoutOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/60" onClick={() => setCheckoutOpen(false)} />
+          <div className="absolute inset-0 bg-black/50" onClick={() => setCheckoutOpen(false)} />
           <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col">
             <div className="flex items-center justify-between p-5 border-b bg-[#003DA5] rounded-t-2xl text-white flex-shrink-0">
               <h2 className="text-xl font-bold">Confirmar pedido</h2>
@@ -522,12 +458,11 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
                 </div>
               </div>
 
-              {/* Comprobante de pago */}
               <div className="space-y-1.5">
                 <Label>Comprobante de pago (opcional)</Label>
                 <div
                   onClick={() => fileInputRef.current?.click()}
-                  className="cursor-pointer border-2 border-dashed border-gray-300 rounded-xl p-4 text-center hover:border-blue-400 hover:bg-blue-50 transition-colors"
+                  className="cursor-pointer border-2 border-dashed border-gray-300 rounded-xl p-4 text-center hover:border-[#003DA5] hover:bg-blue-50 transition-colors"
                 >
                   {comprobante ? (
                     <div className="flex items-center justify-center gap-2 text-green-600">
