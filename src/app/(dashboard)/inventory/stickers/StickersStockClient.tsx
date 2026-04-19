@@ -44,8 +44,8 @@ export default function StickersStockClient({ stock, stickers }: { stock: any[];
     ? stickers
         .filter((s) => String(s.album_id) === selectedAlbum)
         .sort((a, b) => {
-          const da = a.descripcion ?? `#${a.numero}`
-          const db = b.descripcion ?? `#${b.numero}`
+          const da = a.descripcion ?? String(a.numero)
+          const db = b.descripcion ?? String(b.numero)
           return da.localeCompare(db, 'es', { numeric: true })
         })
     : []
@@ -105,6 +105,25 @@ export default function StickersStockClient({ stock, stickers }: { stock: any[];
   }
 
   async function handleDelete(id: number) {
+    const item = stock.find((s: any) => s.id === id)
+    if (item && item.cantidad > 0) {
+      alert(`No se puede eliminar: tiene ${item.cantidad} unidad(es) en stock. Ajusta el stock a 0 primero.`)
+      return
+    }
+    const { count: ventasCount } = await supabase
+      .from('sale_items').select('id', { count: 'exact', head: true })
+      .eq('tipo', 'sticker').eq('referencia_id', id)
+    if (ventasCount && ventasCount > 0) {
+      alert('No se puede eliminar: esta entrada tiene historial de ventas registradas.')
+      return
+    }
+    const { count: comboCount } = await supabase
+      .from('combo_items').select('id', { count: 'exact', head: true })
+      .eq('stock_sticker_id', id)
+    if (comboCount && comboCount > 0) {
+      alert('No se puede eliminar: esta lámina está incluida en un combo.')
+      return
+    }
     if (!confirm('¿Eliminar este registro?')) return
     await supabase.from('stock_stickers').delete().eq('id', id)
     router.refresh()

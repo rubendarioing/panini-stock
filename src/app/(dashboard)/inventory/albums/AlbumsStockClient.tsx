@@ -110,6 +110,25 @@ export default function AlbumsStockClient({ stock, albums }: { stock: any[]; alb
   }
 
   async function handleDelete(id: number) {
+    const item = stock.find((s: any) => s.id === id)
+    if (item && item.cantidad > 0) {
+      alert(`No se puede eliminar: tiene ${item.cantidad} unidad(es) en stock. Ajusta el stock a 0 primero.`)
+      return
+    }
+    const { count: ventasCount } = await supabase
+      .from('sale_items').select('id', { count: 'exact', head: true })
+      .eq('tipo', 'album').eq('referencia_id', id)
+    if (ventasCount && ventasCount > 0) {
+      alert('No se puede eliminar: este álbum tiene historial de ventas registradas.')
+      return
+    }
+    const { count: comboCount } = await supabase
+      .from('combo_items').select('id', { count: 'exact', head: true })
+      .eq('stock_album_id', id)
+    if (comboCount && comboCount > 0) {
+      alert('No se puede eliminar: este álbum está incluido en un combo.')
+      return
+    }
     if (!confirm('¿Eliminar este registro de stock?')) return
     await supabase.from('stock_albums').delete().eq('id', id)
     router.refresh()

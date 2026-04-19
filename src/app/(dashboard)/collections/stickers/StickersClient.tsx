@@ -36,7 +36,7 @@ export default function StickersClient({ albums, stickers }: { albums: any[]; st
   )
 
   const existingNumbers = useMemo(
-    () => new Set(albumStickers.filter((s) => !s.descripcion).map((s) => s.numero)),
+    () => new Set(albumStickers.filter((s) => !s.descripcion).map((s) => String(s.numero))),
     [albumStickers]
   )
 
@@ -57,11 +57,11 @@ export default function StickersClient({ albums, stickers }: { albums: any[]; st
     const nuevas = []
     for (let n = from; n <= to; n++) {
       const desc = rangePrefix ? `${rangePrefix} ${n}` : null
-      const yaExiste = desc ? existingDescriptions.has(desc) : existingNumbers.has(n)
+      const yaExiste = desc ? existingDescriptions.has(desc) : existingNumbers.has(String(n))
       if (!yaExiste) {
         nuevas.push({
           album_id: Number(selectedAlbum),
-          numero: n,
+          numero: String(n),
           descripcion: desc,
         })
       }
@@ -82,7 +82,7 @@ export default function StickersClient({ albums, stickers }: { albums: any[]; st
   async function handleSingle(e: React.FormEvent) {
     e.preventDefault()
     if (!selectedAlbum || !singleNumero) return
-    const numero = Number(singleNumero)
+    const numero = singleNumero.trim().toUpperCase()
     if (existingNumbers.has(numero)) {
       alert(`La lámina #${numero} ya existe en este álbum`)
       return
@@ -100,7 +100,29 @@ export default function StickersClient({ albums, stickers }: { albums: any[]; st
   }
 
   async function handleDelete(id: number) {
+    const { data: activeStock } = await supabase
+      .from('stock_stickers').select('id, cantidad').eq('sticker_id', id).gt('cantidad', 0)
+    if (activeStock?.length) {
+      const total = activeStock.reduce((a: number, s: any) => a + s.cantidad, 0)
+      alert(`No se puede eliminar: tiene ${total} unidad(es) en stock. Reduce el stock a 0 primero.`)
+      return
+    }
+
+    const { data: allStock } = await supabase
+      .from('stock_stickers').select('id').eq('sticker_id', id)
+    if (allStock?.length) {
+      const ids = allStock.map((s: any) => s.id)
+      const { count } = await supabase
+        .from('sale_items').select('id', { count: 'exact', head: true })
+        .eq('tipo', 'sticker').in('referencia_id', ids)
+      if (count && count > 0) {
+        alert('No se puede eliminar: la lámina tiene historial de ventas registradas.')
+        return
+      }
+    }
+
     if (!confirm('¿Eliminar esta lámina del catálogo?')) return
+    if (allStock?.length) await supabase.from('stock_stickers').delete().eq('sticker_id', id)
     await supabase.from('stickers').delete().eq('id', id)
     router.refresh()
   }
@@ -220,14 +242,13 @@ export default function StickersClient({ albums, stickers }: { albums: any[]; st
               <div className="space-y-1.5">
                 <Label>Número de lámina</Label>
                 <Input
-                  type="number"
-                  min="1"
-                  placeholder="Ej: 245"
+                  type="text"
+                  placeholder="Ej: 245, 00, 000, A, B, C"
                   value={singleNumero}
-                  onChange={(e) => setSingleNumero(e.target.value)}
+                  onChange={(e) => setSingleNumero(e.target.value.toUpperCase())}
                   required
                 />
-                {singleNumero && existingNumbers.has(Number(singleNumero)) && (
+                {singleNumero && existingNumbers.has(singleNumero.trim().toUpperCase()) && (
                   <p className="text-xs text-red-500">Esta lámina ya existe en el álbum</p>
                 )}
               </div>
@@ -237,7 +258,7 @@ export default function StickersClient({ albums, stickers }: { albums: any[]; st
               </div>
               <Button
                 type="submit"
-                disabled={loadingSingle || !singleNumero || existingNumbers.has(Number(singleNumero))}
+                disabled={loadingSingle || !singleNumero || existingNumbers.has(singleNumero.trim().toUpperCase())}
                 className="w-full"
                 variant="outline"
               >
@@ -270,7 +291,9 @@ function getImagen(s: any): string | null {
 }
 
 function StickersTable({ stickers, onDelete }: { stickers: any[]; onDelete: (id: number) => void }) {
-  const sorted = [...stickers].sort((a, b) => a.numero - b.numero)
+  const sorted = [...stickers].sort((a, b) =>
+    String(a.numero).localeCompare(String(b.numero), 'es', { numeric: true })
+  )
 
   const groups = sorted.reduce((acc: Record<string, any[]>, s) => {
     const prefix = s.descripcion

@@ -130,6 +130,25 @@ export default function SalesClient({ sales, albumStock, stickerStock, combos }:
     router.refresh()
   }
 
+  function getItemLabel(item: any): string {
+    if (item.tipo === 'album') {
+      const s = albumStock.find((a: any) => a.id === item.referencia_id)
+      if (!s) return 'Álbum'
+      const estadoLabel = s.estado === 'lleno' ? 'Lleno' : s.estado === 'set_a_pegar' ? 'Set a Pegar' : 'Vacío'
+      return `${s.albums?.nombre} ${s.albums?.anio} — ${estadoLabel}`
+    }
+    if (item.tipo === 'sticker') {
+      const s = stickerStock.find((a: any) => a.id === item.referencia_id)
+      const st = s?.stickers
+      return st ? `${st.descripcion ?? `#${st.numero}`} — ${st.albums?.nombre}` : 'Lámina'
+    }
+    if (item.tipo === 'combo') {
+      const c = combos.find((a: any) => a.id === item.referencia_id)
+      return c?.nombre ?? 'Combo'
+    }
+    return item.tipo
+  }
+
   const filtered = sales.filter((s) => filterEstado === 'all' || s.estado === filterEstado)
 
   return (
@@ -270,7 +289,7 @@ export default function SalesClient({ sales, albumStock, stickerStock, combos }:
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Cliente</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Contacto</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Ciudad</th>
-                <th className="text-right px-4 py-3 font-medium text-gray-600">Items</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">Productos</th>
                 <th className="text-right px-4 py-3 font-medium text-gray-600">Total</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Estado</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Método</th>
@@ -288,7 +307,16 @@ export default function SalesClient({ sales, albumStock, stickerStock, combos }:
                     <td className="px-4 py-3 font-medium text-gray-900">{sale.clientes?.nombre ?? sale.cliente_nombre ?? 'Anónimo'}</td>
                     <td className="px-4 py-3 text-gray-500 text-xs">{sale.clientes?.telefono ?? sale.cliente_contacto ?? '—'}</td>
                     <td className="px-4 py-3 text-gray-500 text-xs">{sale.clientes?.ciudad ?? sale.ciudad ?? '—'}</td>
-                    <td className="px-4 py-3 text-right text-gray-600">{sale.sale_items?.length ?? 0}</td>
+                    <td className="px-4 py-3 text-xs text-gray-700 max-w-[200px]">
+                      {sale.sale_items?.slice(0, 2).map((item: any, i: number) => (
+                        <div key={i} className="truncate">
+                          <span className="font-medium">{item.cantidad}×</span> {getItemLabel(item)}
+                        </div>
+                      ))}
+                      {sale.sale_items?.length > 2 && (
+                        <div className="text-gray-400">+{sale.sale_items.length - 2} más</div>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-right font-semibold text-green-600">{formatCurrency(sale.total)}</td>
                     <td className="px-4 py-3">
                       <Badge variant={config.variant as any}>{config.label}</Badge>
@@ -370,9 +398,12 @@ export default function SalesClient({ sales, albumStock, stickerStock, combos }:
                 <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Productos</p>
                 <div className="space-y-1.5">
                   {detailSale.sale_items?.map((item: any, idx: number) => (
-                    <div key={idx} className="flex justify-between text-sm py-1.5 border-b border-gray-100 last:border-0">
-                      <span className="text-gray-700 capitalize">{item.tipo} × {item.cantidad}</span>
-                      <span className="font-medium">{formatCurrency(item.subtotal)}</span>
+                    <div key={idx} className="flex justify-between items-start py-2 border-b border-gray-100 last:border-0 gap-3">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-gray-900 truncate">{getItemLabel(item)}</p>
+                        <p className="text-xs text-gray-400 capitalize">{item.tipo} · {item.cantidad} und. × {formatCurrency(item.precio_unitario)}</p>
+                      </div>
+                      <span className="text-sm font-semibold text-gray-800 whitespace-nowrap">{formatCurrency(item.subtotal)}</span>
                     </div>
                   ))}
                   <div className="flex justify-between font-bold text-base pt-2">

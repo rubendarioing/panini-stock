@@ -12,12 +12,10 @@ export default async function SalesPage() {
       .limit(100),
     supabase
       .from('stock_albums')
-      .select('id, cantidad, precio_venta, albums(nombre, anio, collection_types(nombre))')
-      .gt('cantidad', 0),
+      .select('id, cantidad, precio_venta, estado, albums(nombre, anio, collection_types(nombre))'),
     supabase
       .from('stock_stickers')
-      .select('id, cantidad, precio_venta, stickers(numero, albums(nombre))')
-      .gt('cantidad', 0),
+      .select('id, cantidad, precio_venta, stickers(numero, descripcion, albums(nombre))'),
     supabase.from('combos').select('id, nombre, precio_total').eq('activo', true),
   ])
 
