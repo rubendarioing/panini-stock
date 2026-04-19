@@ -1,5 +1,6 @@
 import { createClient as createAdminClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
+import { Resend } from 'resend'
 
 export async function POST(request: Request) {
   const formData = await request.formData()
@@ -219,6 +220,75 @@ export async function POST(request: Request) {
         }
       }
     }
+  }
+
+  // Enviar notificación al admin
+  try {
+    const resend = new Resend(process.env.RESEND_API_KEY)
+    const formatCurrency = (n: number) =>
+      new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(n)
+
+    const itemsHtml = items.map((i: any) =>
+      `<tr>
+        <td style="padding:6px 8px;border-bottom:1px solid #f0f0f0">${i.tipo === 'album' ? '📘' : i.tipo === 'sticker' ? '🃏' : i.tipo === 'combo' ? '🎁' : '📦'} ${i.tipo}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid #f0f0f0;text-align:center">${i.cantidad}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid #f0f0f0;text-align:right">${formatCurrency(i.subtotal)}</td>
+      </tr>`
+    ).join('')
+
+    await resend.emails.send({
+      from: 'Panini Stock <onboarding@resend.dev>',
+      to: process.env.ADMIN_EMAIL!,
+      subject: `🛒 Nuevo pedido #${sale.id} — ${nombre}`,
+      html: `
+        <div style="font-family:sans-serif;max-width:560px;margin:0 auto;color:#1a1a1a">
+          <div style="background:#003DA5;padding:24px 32px;border-radius:12px 12px 0 0">
+            <h1 style="color:#fff;margin:0;font-size:20px">🛒 Nuevo pedido recibido</h1>
+            <p style="color:#93b4f0;margin:4px 0 0;font-size:14px">Pedido #${sale.id}</p>
+          </div>
+          <div style="background:#fff;padding:24px 32px;border:1px solid #e5e7eb;border-top:none">
+
+            <h2 style="font-size:15px;margin:0 0 12px;color:#374151">Datos del cliente</h2>
+            <table style="width:100%;font-size:14px;border-collapse:collapse;margin-bottom:20px">
+              <tr><td style="padding:4px 0;color:#6b7280;width:120px">Nombre</td><td style="padding:4px 0;font-weight:600">${nombre}</td></tr>
+              <tr><td style="padding:4px 0;color:#6b7280">WhatsApp</td><td style="padding:4px 0"><a href="https://wa.me/${telefono}" style="color:#003DA5">${telefono}</a></td></tr>
+              <tr><td style="padding:4px 0;color:#6b7280">Email</td><td style="padding:4px 0">${email}</td></tr>
+              <tr><td style="padding:4px 0;color:#6b7280">Ciudad</td><td style="padding:4px 0">${ciudad}</td></tr>
+              <tr><td style="padding:4px 0;color:#6b7280">Dirección</td><td style="padding:4px 0">${direccion}</td></tr>
+              <tr><td style="padding:4px 0;color:#6b7280">Notas</td><td style="padding:4px 0">${notas}</td></tr>
+            </table>
+
+            <h2 style="font-size:15px;margin:0 0 12px;color:#374151">Productos</h2>
+            <table style="width:100%;font-size:14px;border-collapse:collapse;margin-bottom:20px">
+              <thead>
+                <tr style="background:#f9fafb">
+                  <th style="padding:6px 8px;text-align:left;color:#6b7280;font-weight:500">Tipo</th>
+                  <th style="padding:6px 8px;text-align:center;color:#6b7280;font-weight:500">Cant.</th>
+                  <th style="padding:6px 8px;text-align:right;color:#6b7280;font-weight:500">Subtotal</th>
+                </tr>
+              </thead>
+              <tbody>${itemsHtml}</tbody>
+            </table>
+
+            <div style="background:#f0f4ff;border-radius:8px;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
+              <span style="font-size:15px;font-weight:600;color:#374151">Total del pedido</span>
+              <span style="font-size:18px;font-weight:700;color:#003DA5">${formatCurrency(total)}</span>
+            </div>
+
+            ${comprobanteUrl ? `<p style="margin:0 0 20px"><a href="${comprobanteUrl}" style="background:#003DA5;color:#fff;padding:10px 20px;border-radius:8px;text-decoration:none;font-size:14px;font-weight:600">Ver comprobante de pago</a></p>` : ''}
+
+            <a href="${process.env.NEXT_PUBLIC_SUPABASE_URL ? `${process.env.NEXT_PUBLIC_APP_URL ?? 'https://panini-stock.vercel.app'}/sales` : '#'}" style="display:inline-block;background:#16a34a;color:#fff;padding:10px 20px;border-radius:8px;text-decoration:none;font-size:14px;font-weight:600">
+              Ver en el dashboard →
+            </a>
+          </div>
+          <div style="padding:12px 32px;text-align:center;font-size:12px;color:#9ca3af">
+            Panini Stock · Notificación automática
+          </div>
+        </div>
+      `,
+    })
+  } catch (_) {
+    // El email es best-effort, no bloquea la respuesta
   }
 
   return NextResponse.json({ ok: true, order_id: sale.id })
