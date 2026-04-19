@@ -14,7 +14,7 @@ import { formatCurrency } from '@/lib/utils'
 interface Props {
   open: boolean
   onClose: () => void
-  tabla: 'stock_albums' | 'stock_stickers'
+  tabla: 'stock_albums' | 'stock_stickers' | 'stock_accesorios'
   item: {
     id: number
     cantidad: number
