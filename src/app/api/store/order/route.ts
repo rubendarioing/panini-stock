@@ -23,6 +23,22 @@ export async function POST(request: Request) {
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   )
 
+  // Verificar si ya tiene un pedido pendiente con ese teléfono
+  const { data: pedidoPendiente } = await supabase
+    .from('sales')
+    .select('id')
+    .eq('cliente_contacto', telefono)
+    .eq('estado', 'pendiente')
+    .limit(1)
+    .maybeSingle()
+
+  if (pedidoPendiente) {
+    return NextResponse.json(
+      { error: 'Ya tienes un pedido en proceso. Espera a que sea confirmado antes de realizar uno nuevo.' },
+      { status: 409 }
+    )
+  }
+
   // Buscar cliente existente por teléfono o correo en una sola consulta
   let clienteId: number | null = null
   const { data: clienteExistente } = await supabase

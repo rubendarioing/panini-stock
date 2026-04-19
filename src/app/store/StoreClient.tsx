@@ -33,6 +33,7 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
   const [search, setSearch] = useState('')
   const [filterCategory, setFilterCategory] = useState('all')
   const [loading, setLoading] = useState(false)
+  const [orderError, setOrderError] = useState<string | null>(null)
   const [comprobante, setComprobante] = useState<File | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [customer, setCustomer] = useState({
@@ -158,10 +159,13 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
   const cartTotal = cart.reduce((acc, i) => acc + i.precio * i.cantidad, 0)
   const cartCount = cart.reduce((acc, i) => acc + i.cantidad, 0)
 
+  const telefonoValido = /^\d{10}$/.test(customer.telefono.trim())
+  const emailValido = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customer.email.trim())
+
   const formValido =
     customer.nombre.trim() !== '' &&
-    customer.telefono.trim() !== '' &&
-    customer.email.trim() !== '' &&
+    telefonoValido &&
+    emailValido &&
     customer.ciudad.trim() !== '' &&
     customer.direccion.trim() !== '' &&
     customer.notas.trim() !== '' &&
@@ -175,6 +179,7 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
     e.preventDefault()
     if (cart.length === 0) return
     setLoading(true)
+    setOrderError(null)
 
     const fd = new FormData()
     fd.append('nombre', customer.nombre)
@@ -202,6 +207,8 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
       setCart([])
       setCheckoutOpen(false)
       setOrderDone(true)
+    } else {
+      setOrderError(data.error ?? 'Ocurrió un error al registrar el pedido. Intenta de nuevo.')
     }
   }
 
@@ -447,11 +454,30 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
                 </div>
                 <div className="space-y-1.5">
                   <Label>WhatsApp / Teléfono</Label>
-                  <Input placeholder="Ej: 3001234567" value={customer.telefono} onChange={(e) => setCustomer({ ...customer, telefono: e.target.value })} required />
+                  <Input
+                    placeholder="Ej: 3001234567"
+                    value={customer.telefono}
+                    onChange={(e) => { setCustomer({ ...customer, telefono: e.target.value }); setOrderError(null) }}
+                    required
+                    className={customer.telefono && !telefonoValido ? 'border-red-400 focus-visible:ring-red-300' : ''}
+                  />
+                  {customer.telefono && !telefonoValido && (
+                    <p className="text-xs text-red-500">Debe tener exactamente 10 dígitos numéricos</p>
+                  )}
                 </div>
                 <div className="space-y-1.5">
                   <Label>Correo electrónico</Label>
-                  <Input type="email" placeholder="tu@email.com" value={customer.email} onChange={(e) => setCustomer({ ...customer, email: e.target.value })} required />
+                  <Input
+                    type="email"
+                    placeholder="tu@email.com"
+                    value={customer.email}
+                    onChange={(e) => setCustomer({ ...customer, email: e.target.value })}
+                    required
+                    className={customer.email && !emailValido ? 'border-red-400 focus-visible:ring-red-300' : ''}
+                  />
+                  {customer.email && !emailValido && (
+                    <p className="text-xs text-red-500">Ingresa un correo electrónico válido</p>
+                  )}
                 </div>
                 <div className="space-y-1.5">
                   <Label>Ciudad</Label>
@@ -488,6 +514,12 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
                 </div>
                 <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => setComprobante(e.target.files?.[0] ?? null)} />
               </div>
+
+              {orderError && (
+                <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-4 py-3">
+                  {orderError}
+                </div>
+              )}
 
               <button
                 type="submit"
