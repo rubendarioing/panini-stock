@@ -1,12 +1,14 @@
 'use client'
 
-import { useState, useMemo, useRef, useCallback } from 'react'
+import { useState, useMemo, useRef, useEffect } from 'react'
 import Image from 'next/image'
-import { ShoppingCart, X, Plus, Minus, BookOpen, Layers, Package2, Search, CheckCircle, Upload, ChevronLeft, ChevronRight, Images } from 'lucide-react'
+import { ShoppingCart, X, Plus, Minus, BookOpen, Layers, Package2, Search, CheckCircle, Upload, ChevronLeft, ChevronRight, Images, RefreshCw } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { formatCurrency } from '@/lib/utils'
+import { createClient } from '@/lib/supabase/client'
+import { useRouter } from 'next/navigation'
 
 interface CartItem {
   tipo: 'album' | 'sticker' | 'combo'
@@ -43,6 +45,119 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
     nombre: '', email: '', telefono: '', ciudad: '', direccion: '', notas: '',
   })
 
+  // Estado local inicializado desde props del servidor
+  const [liveAlbumStock, setLiveAlbumStock]         = useState(albumStock)
+  const [liveStickerStock, setLiveStickerStock]     = useState(stickerStock)
+  const [liveAccesorioStock, setLiveAccesorioStock] = useState(accesorioStock)
+  const [liveCombos, setLiveCombos]                 = useState(combos)
+  const [realtimeToast, setRealtimeToast]           = useState(false)
+  const supabase = createClient()
+  const router = useRouter()
+
+  // Sincronizar props del servidor al estado local (se activa tras router.refresh())
+  useEffect(() => { setLiveAlbumStock(albumStock) }, [albumStock])
+  useEffect(() => { setLiveStickerStock(stickerStock) }, [stickerStock])
+  useEffect(() => { setLiveAccesorioStock(accesorioStock) }, [accesorioStock])
+  useEffect(() => { setLiveCombos(combos) }, [combos])
+
+  useEffect(() => {
+    function showToast() {
+      setRealtimeToast(true)
+      setTimeout(() => setRealtimeToast(false), 3000)
+    }
+
+    // Si el item ya está en estado → actualización directa (rápido, sin red extra)
+    // Si no está (era cantidad 0 o es nuevo) → router.refresh() recarga los datos
+    // del server component con permisos completos, y los useEffect de sync lo aplican
+    function handleStockUpdate(
+      row: any,
+      setter: React.Dispatch<React.SetStateAction<any[]>>,
+      tipo: string,
+    ) {
+      if (row.cantidad <= 0) {
+        setter(prev => prev.filter((s: any) => s.id !== row.id))
+        return
+      }
+      // Leer estado actual sin mutar para decidir si el item existe
+      setter(prev => {
+        const idx = prev.findIndex((s: any) => s.id === row.id)
+        if (idx < 0) return prev // no estaba → router.refresh() se llama abajo
+        const updated = [...prev]
+        updated[idx] = { ...updated[idx], cantidad: row.cantidad, precio_venta: row.precio_venta }
+        return updated
+      })
+      // Verificar existencia con una lectura directa del DOM state no es posible,
+      // por eso usamos un segundo setter con función para detectar si estaba o no
+      setter(prev => {
+        const exists = prev.some((s: any) => s.id === row.id)
+        if (!exists) router.refresh()
+        return prev
+      })
+      setCart(prev => prev.map(i =>
+        i.tipo === tipo && i.referencia_id === row.id
+          ? { ...i, stock_disponible: row.cantidad }
+          : i
+      ))
+    }
+
+    const channel = supabase
+      .channel('store-stock')
+      // Albums
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'stock_albums' }, ({ new: row }) => {
+        if (row.cantidad > 0) router.refresh()
+        showToast()
+      })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'stock_albums' }, ({ new: row }) => {
+        handleStockUpdate(row, setLiveAlbumStock, 'album')
+        showToast()
+      })
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'stock_albums' }, ({ old: row }) => {
+        setLiveAlbumStock(prev => prev.filter((s: any) => s.id !== row.id)); showToast()
+      })
+      // Stickers
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'stock_stickers' }, ({ new: row }) => {
+        if (row.cantidad > 0) router.refresh()
+        showToast()
+      })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'stock_stickers' }, ({ new: row }) => {
+        handleStockUpdate(row, setLiveStickerStock, 'sticker')
+        showToast()
+      })
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'stock_stickers' }, ({ old: row }) => {
+        setLiveStickerStock(prev => prev.filter((s: any) => s.id !== row.id)); showToast()
+      })
+      // Accesorios
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'stock_accesorios' }, ({ new: row }) => {
+        if (row.cantidad > 0) router.refresh()
+        showToast()
+      })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'stock_accesorios' }, ({ new: row }) => {
+        handleStockUpdate(row, setLiveAccesorioStock, 'accesorio')
+        showToast()
+      })
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'stock_accesorios' }, ({ old: row }) => {
+        setLiveAccesorioStock(prev => prev.filter((s: any) => s.id !== row.id)); showToast()
+      })
+      // Combos
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'combos' }, ({ new: row }) => {
+        if (!row.activo) {
+          setLiveCombos(prev => prev.filter((c: any) => c.id !== row.id))
+        } else {
+          setLiveCombos(prev => prev.map((c: any) =>
+            c.id === row.id ? { ...c, precio_total: row.precio_total, nombre: row.nombre, descripcion: row.descripcion } : c
+          ))
+        }
+        showToast()
+      })
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'combos' }, ({ old: row }) => {
+        setLiveCombos(prev => prev.filter((c: any) => c.id !== row.id)); showToast()
+      })
+      .subscribe()
+
+    return () => { supabase.removeChannel(channel) }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const imagenesMap = useMemo(() => {
     const map: Record<string, string[]> = {}
     stockImagenes.forEach((img: any) => {
@@ -56,7 +171,7 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
   const products = useMemo(() => {
     const list: any[] = []
 
-    albumStock.forEach((s) => {
+    liveAlbumStock.forEach((s: any) => {
       const badge = s.estado === 'lleno' ? 'Lleno' : s.estado === 'set_a_pegar' ? 'Set a Pegar' : 'Vacío'
       const badgeVariant = s.estado === 'lleno' ? 'success' : s.estado === 'set_a_pegar' ? 'warning' : 'secondary'
       list.push({
@@ -77,7 +192,7 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
       })
     })
 
-    accesorioStock.forEach((s) => {
+    liveAccesorioStock.forEach((s: any) => {
       const esSobre = s.tipo === 'sobre'
       const badge = s.cantidad_contenido
         ? `${esSobre ? 'Sobre' : 'Caja'} · ${s.cantidad_contenido} ${esSobre ? 'láminas' : 'sobres'}`
@@ -102,7 +217,7 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
       })
     })
 
-    stickerStock.forEach((s) => {
+    liveStickerStock.forEach((s: any) => {
       const imgs = imagenesMap[`stock_stickers-${s.id}`] ?? []
       const mainImg = imgs[0] ?? s.imagen_url ?? null
       list.push({
@@ -124,7 +239,7 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
       })
     })
 
-    combos.forEach((c) => {
+    liveCombos.forEach((c: any) => {
       list.push({
         id: `combo-${c.id}`,
         tipo: 'combo',
@@ -143,7 +258,7 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
     })
 
     return list
-  }, [albumStock, stickerStock, combos])
+  }, [liveAlbumStock, liveStickerStock, liveAccesorioStock, liveCombos, imagenesMap])
 
   const categories = [
     { value: 'all', label: 'Todo' },
@@ -482,6 +597,14 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Toast de actualización en tiempo real */}
+      {realtimeToast && (
+        <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 bg-gray-900 text-white text-xs px-4 py-2 rounded-full flex items-center gap-2 shadow-lg animate-fade-in">
+          <RefreshCw className="h-3 w-3 animate-spin" />
+          Catálogo actualizado
         </div>
       )}
 
