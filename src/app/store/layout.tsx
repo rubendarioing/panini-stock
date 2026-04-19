@@ -1,7 +1,7 @@
 import type { Metadata } from 'next'
 
 export const metadata: Metadata = {
-  title: 'Tienda — Panini Stock',
+  title: 'Tienda — Pegando Historia Stock',
   description: 'Catálogo de álbumes y láminas Panini',
 }
 
@@ -12,7 +12,7 @@ export default function StoreLayout({ children }: { children: React.ReactNode })
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-14">
             <div className="flex items-center gap-2">
-              <span className="bg-[#FFD600] text-[#E30613] font-black text-lg px-2 py-0.5 rounded tracking-widest select-none">PANINI</span>
+              <span className="bg-white text-[#003DA5] font-black text-lg px-2 py-0.5 rounded tracking-widest select-none">PEGANDO HISTORIA</span>
               <span className="hidden sm:inline text-sm text-blue-200">Stock</span>
             </div>
             <a href="/login" className="text-xs text-blue-200 hover:text-white transition-colors">
