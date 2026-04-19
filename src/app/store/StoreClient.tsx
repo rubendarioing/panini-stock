@@ -1,8 +1,8 @@
 'use client'
 
-import { useState, useMemo, useRef } from 'react'
+import { useState, useMemo, useRef, useCallback } from 'react'
 import Image from 'next/image'
-import { ShoppingCart, X, Plus, Minus, BookOpen, Layers, Package2, Search, CheckCircle, Upload } from 'lucide-react'
+import { ShoppingCart, X, Plus, Minus, BookOpen, Layers, Package2, Search, CheckCircle, Upload, ChevronLeft, ChevronRight, Images } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
@@ -19,12 +19,13 @@ interface CartItem {
   stock_disponible: number
 }
 
-export default function StoreClient({ albumStock, stickerStock, combos, collectionTypes, accesorioStock }: {
+export default function StoreClient({ albumStock, stickerStock, combos, collectionTypes, accesorioStock, stockImagenes }: {
   albumStock: any[]
   stickerStock: any[]
   combos: any[]
   collectionTypes: any[]
   accesorioStock: any[]
+  stockImagenes: any[]
 }) {
   const [cart, setCart] = useState<CartItem[]>([])
   const [cartOpen, setCartOpen] = useState(false)
@@ -35,11 +36,22 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
   const [filterCategory, setFilterCategory] = useState('all')
   const [loading, setLoading] = useState(false)
   const [orderError, setOrderError] = useState<string | null>(null)
+  const [gallery, setGallery] = useState<{images: string[], idx: number} | null>(null)
   const [comprobante, setComprobante] = useState<File | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [customer, setCustomer] = useState({
     nombre: '', email: '', telefono: '', ciudad: '', direccion: '', notas: '',
   })
+
+  const imagenesMap = useMemo(() => {
+    const map: Record<string, string[]> = {}
+    stockImagenes.forEach((img: any) => {
+      const key = `${img.tabla}-${img.referencia_id}`
+      if (!map[key]) map[key] = []
+      map[key].push(img.url)
+    })
+    return map
+  }, [stockImagenes])
 
   const products = useMemo(() => {
     const list: any[] = []
@@ -56,6 +68,7 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
         categoria: s.albums?.collection_types?.nombre ?? 'Otros',
         type_id: s.albums?.type_id,
         imagen_url: s.albums?.imagen_url,
+        imagenes: s.albums?.imagen_url ? [s.albums.imagen_url] : [],
         notas: s.notas ?? '',
         precio: s.precio_venta,
         stock: s.cantidad,
@@ -69,6 +82,8 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
       const badge = s.cantidad_contenido
         ? `${esSobre ? 'Sobre' : 'Caja'} · ${s.cantidad_contenido} ${esSobre ? 'láminas' : 'sobres'}`
         : esSobre ? 'Sobre' : 'Caja Sellada'
+      const imgs = imagenesMap[`stock_accesorios-${s.id}`] ?? []
+      const mainImg = imgs[0] ?? s.imagen_url ?? s.albums?.imagen_url ?? null
       list.push({
         id: `accesorio-${s.id}`,
         tipo: 'accesorio',
@@ -77,7 +92,8 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
         sublabel: `${esSobre ? 'Sobre' : 'Caja Sellada'} — ${s.albums?.collection_types?.nombre ?? ''} ${s.albums?.anio ?? ''}`.trim(),
         categoria: esSobre ? 'Sobres' : 'Cajas Selladas',
         type_id: null,
-        imagen_url: s.imagen_url ?? s.albums?.imagen_url ?? null,
+        imagen_url: mainImg,
+        imagenes: imgs.length > 0 ? imgs : (mainImg ? [mainImg] : []),
         notas: s.notas ?? '',
         precio: s.precio_venta,
         stock: s.cantidad,
@@ -87,6 +103,8 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
     })
 
     stickerStock.forEach((s) => {
+      const imgs = imagenesMap[`stock_stickers-${s.id}`] ?? []
+      const mainImg = imgs[0] ?? s.imagen_url ?? null
       list.push({
         id: `sticker-${s.id}`,
         tipo: 'sticker',
@@ -95,7 +113,8 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
         sublabel: `${s.stickers?.albums?.nombre ?? ''} — ${s.stickers?.albums?.collection_types?.nombre ?? ''} ${s.stickers?.albums?.anio ?? ''}`.trim(),
         categoria: 'Láminas',
         type_id: null,
-        imagen_url: s.imagen_url ?? null,
+        imagen_url: mainImg,
+        imagenes: imgs.length > 0 ? imgs : (mainImg ? [mainImg] : []),
         descripcion: s.stickers?.descripcion ?? '',
         notas: s.notas ?? '',
         precio: s.precio_venta,
@@ -115,6 +134,7 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
         categoria: 'Combos',
         type_id: null,
         imagen_url: c.imagen_url ?? null,
+        imagenes: c.imagen_url ? [c.imagen_url] : [],
         precio: c.precio_total,
         stock: 999,
         badge: 'Combo',
@@ -268,28 +288,30 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
   return (
     <div className="relative">
       {/* Título */}
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Catálogo</h1>
-        <p className="text-gray-500 text-sm mt-0.5">Álbumes, láminas y combos de tus torneos favoritos</p>
+      <div className="mb-4">
+        <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Catálogo</h1>
+        <p className="text-gray-500 text-xs sm:text-sm mt-0.5">Álbumes, láminas y combos de tus torneos favoritos</p>
       </div>
 
-      {/* Buscador + filtros */}
-      <div className="flex flex-col sm:flex-row gap-3 mb-6">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-          <Input
-            placeholder="Buscar producto..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="pl-9"
-          />
-        </div>
-        <div className="flex gap-2 flex-wrap">
+      {/* Buscador */}
+      <div className="relative mb-3">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+        <Input
+          placeholder="Buscar producto..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="pl-9"
+        />
+      </div>
+
+      {/* Filtros — scroll horizontal en móvil */}
+      <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0 mb-5">
+        <div className="flex gap-2 pb-1 sm:flex-wrap">
           {categories.map((cat) => (
             <button
               key={cat.value}
               onClick={() => setFilterCategory(cat.value)}
-              className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+              className={`flex-shrink-0 px-3 py-1.5 rounded-full text-xs sm:text-sm font-medium transition-colors whitespace-nowrap ${
                 filterCategory === cat.value
                   ? 'bg-[#003DA5] text-white'
                   : 'bg-white text-gray-600 border border-gray-200 hover:border-[#003DA5] hover:text-[#003DA5]'
@@ -308,58 +330,69 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
           <p>No se encontraron productos</p>
         </div>
       ) : (
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+        <div className="grid grid-cols-2 gap-3 sm:gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
           {filtered.map((product) => {
             const inCart = getCartQty(product.tipo, product.referencia_id)
             return (
-              <div key={product.id} className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden flex flex-col hover:shadow-md hover:border-blue-200 transition-all">
-                <div className="relative bg-gray-100 aspect-[3/4]">
+              <div key={product.id} className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden flex flex-col active:scale-[0.98] hover:shadow-md hover:border-blue-200 transition-all">
+                <div
+                  className={`relative bg-gray-100 aspect-[3/4] ${product.imagenes?.length > 0 ? 'cursor-zoom-in' : ''}`}
+                  onClick={product.imagenes?.length > 0 ? () => setGallery({ images: product.imagenes, idx: 0 }) : undefined}
+                >
                   {product.imagen_url ? (
                     <Image src={product.imagen_url} alt={product.label} fill className="object-cover" unoptimized />
                   ) : (
                     <div className="h-full flex flex-col items-center justify-center text-gray-300 gap-2">
-                      {product.tipo === 'album' && <BookOpen className="h-10 w-10" />}
-                      {product.tipo === 'sticker' && <Layers className="h-10 w-10" />}
-                      {product.tipo === 'combo' && <Package2 className="h-10 w-10" />}
+                      {product.tipo === 'album' && <BookOpen className="h-8 w-8 sm:h-10 sm:w-10" />}
+                      {product.tipo === 'sticker' && <Layers className="h-8 w-8 sm:h-10 sm:w-10" />}
+                      {(product.tipo === 'combo' || product.tipo === 'accesorio') && <Package2 className="h-8 w-8 sm:h-10 sm:w-10" />}
                     </div>
                   )}
-                  <div className="absolute top-2 left-2">
-                    <Badge variant={product.badgeVariant as any} className="text-xs">{product.badge}</Badge>
+                  <div className="absolute top-1.5 left-1.5 sm:top-2 sm:left-2">
+                    <Badge variant={product.badgeVariant as any} className="text-[10px] sm:text-xs px-1.5">{product.badge}</Badge>
                   </div>
                   {product.stock < 5 && product.stock < 999 && (
-                    <div className="absolute top-2 right-2">
-                      <Badge variant="destructive" className="text-xs">¡Últimas!</Badge>
+                    <div className="absolute top-1.5 right-1.5 sm:top-2 sm:right-2">
+                      <Badge variant="destructive" className="text-[10px] sm:text-xs px-1.5">¡Últimas!</Badge>
+                    </div>
+                  )}
+                  {product.imagenes?.length > 1 && (
+                    <div className="absolute bottom-1.5 right-1.5 bg-black/50 text-white rounded-full px-1.5 py-0.5 flex items-center gap-0.5">
+                      <Images className="h-2.5 w-2.5" />
+                      <span className="text-[9px] font-medium">{product.imagenes.length}</span>
                     </div>
                   )}
                 </div>
-                <div className="p-3 flex flex-col flex-1">
-                  <p className="font-semibold text-gray-900 text-sm leading-tight line-clamp-2">{product.label}</p>
-                  {product.sublabel && <p className="text-xs text-gray-400 mt-0.5 line-clamp-1">{product.sublabel}</p>}
-                  {product.notas && <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">{product.notas}</p>}
+                <div className="p-2 sm:p-3 flex flex-col flex-1">
+                  <p className="font-semibold text-gray-900 text-xs sm:text-sm leading-tight line-clamp-2">{product.label}</p>
+                  {product.sublabel && <p className="text-[10px] sm:text-xs text-gray-400 mt-0.5 line-clamp-1">{product.sublabel}</p>}
+                  {product.notas && <p className="text-[10px] sm:text-xs text-gray-500 mt-0.5 line-clamp-2">{product.notas}</p>}
                   <div className="mt-auto pt-2">
-                    <p className="text-lg font-bold text-[#003DA5]">{formatCurrency(product.precio)}</p>
-                    {product.stock < 999 && <p className="text-xs text-gray-400">{product.stock} disponibles</p>}
+                    <p className="text-base sm:text-lg font-bold text-[#003DA5]">{formatCurrency(product.precio)}</p>
+                    {product.stock < 999 && <p className="text-[10px] sm:text-xs text-gray-400">{product.stock} disp.</p>}
                     {inCart === 0 ? (
                       <button
                         onClick={() => addToCart(product)}
-                        className="mt-2 w-full bg-[#003DA5] hover:bg-[#002d80] text-white text-sm font-medium py-2 rounded-lg transition-colors flex items-center justify-center gap-1"
+                        className="mt-2 w-full bg-[#003DA5] active:bg-[#002d80] hover:bg-[#002d80] text-white text-xs sm:text-sm font-medium py-2.5 rounded-lg transition-colors flex items-center justify-center gap-1"
                       >
-                        <ShoppingCart className="h-4 w-4" /> Agregar
+                        <ShoppingCart className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                        <span className="hidden xs:inline sm:inline">Agregar</span>
+                        <span className="xs:hidden sm:hidden">+</span>
                       </button>
                     ) : (
-                      <div className="mt-2 flex items-center justify-between bg-blue-50 border border-blue-200 rounded-lg px-2 py-1">
+                      <div className="mt-2 flex items-center justify-between bg-blue-50 border border-blue-200 rounded-lg px-1 py-1.5 sm:px-2">
                         <button
                           onClick={() => {
                             const idx = cart.findIndex(i => i.tipo === product.tipo && i.referencia_id === product.referencia_id)
                             updateQty(idx, -1)
                           }}
-                          className="p-1 text-[#003DA5] hover:bg-blue-100 rounded"
+                          className="p-1.5 text-[#003DA5] active:bg-blue-100 hover:bg-blue-100 rounded"
                         >
-                          <Minus className="h-4 w-4" />
+                          <Minus className="h-3.5 w-3.5" />
                         </button>
                         <span className="text-[#003DA5] font-bold text-sm">{inCart}</span>
-                        <button onClick={() => addToCart(product)} className="p-1 text-[#003DA5] hover:bg-blue-100 rounded">
-                          <Plus className="h-4 w-4" />
+                        <button onClick={() => addToCart(product)} className="p-1.5 text-[#003DA5] active:bg-blue-100 hover:bg-blue-100 rounded">
+                          <Plus className="h-3.5 w-3.5" />
                         </button>
                       </div>
                     )}
@@ -375,11 +408,15 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
       {cartCount > 0 && !cartOpen && !checkoutOpen && (
         <button
           onClick={() => setCartOpen(true)}
-          className="fixed bottom-6 right-6 bg-[#003DA5] hover:bg-[#002d80] text-white rounded-full px-5 py-3 shadow-lg flex items-center gap-3 transition-all z-50"
+          className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 bg-[#003DA5] active:bg-[#002d80] hover:bg-[#002d80] text-white rounded-full shadow-lg flex items-center gap-2 transition-all z-50 px-4 py-3 sm:px-5"
         >
-          <ShoppingCart className="h-5 w-5" />
-          <span className="font-semibold">{cartCount} {cartCount === 1 ? 'item' : 'items'}</span>
-          <span className="font-bold">{formatCurrency(cartTotal)}</span>
+          <div className="relative">
+            <ShoppingCart className="h-5 w-5" />
+            <span className="absolute -top-2 -right-2 bg-red-500 text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center leading-none">
+              {cartCount > 9 ? '9+' : cartCount}
+            </span>
+          </div>
+          <span className="font-bold text-sm">{formatCurrency(cartTotal)}</span>
         </button>
       )}
 
@@ -387,7 +424,7 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
       {cartOpen && (
         <div className="fixed inset-0 z-50 flex justify-end">
           <div className="absolute inset-0 bg-black/40" onClick={() => setCartOpen(false)} />
-          <div className="relative bg-white w-full max-w-sm flex flex-col shadow-xl">
+          <div className="relative bg-white w-full sm:max-w-sm flex flex-col shadow-xl">
             <div className="flex items-center justify-between p-4 border-b bg-[#003DA5] text-white">
               <h2 className="text-lg font-bold flex items-center gap-2">
                 <ShoppingCart className="h-5 w-5" /> Tu carrito
@@ -448,11 +485,59 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
         </div>
       )}
 
+      {/* Lightbox galería de imágenes */}
+      {gallery && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/90" onClick={() => setGallery(null)}>
+          <button
+            onClick={(e) => { e.stopPropagation(); setGallery(null) }}
+            className="absolute top-4 right-4 text-white/70 hover:text-white p-2"
+          >
+            <X className="h-6 w-6" />
+          </button>
+          {gallery.images.length > 1 && (
+            <button
+              onClick={(e) => { e.stopPropagation(); setGallery(g => g ? { ...g, idx: (g.idx - 1 + g.images.length) % g.images.length } : null) }}
+              className="absolute left-4 top-1/2 -translate-y-1/2 text-white/70 hover:text-white p-2 bg-black/30 rounded-full"
+            >
+              <ChevronLeft className="h-7 w-7" />
+            </button>
+          )}
+          <div className="relative max-w-[90vw] max-h-[85vh] w-full h-full flex items-center justify-center" onClick={(e) => e.stopPropagation()}>
+            <Image
+              src={gallery.images[gallery.idx]}
+              alt={`Imagen ${gallery.idx + 1}`}
+              fill
+              className="object-contain"
+              unoptimized
+            />
+          </div>
+          {gallery.images.length > 1 && (
+            <>
+              <button
+                onClick={(e) => { e.stopPropagation(); setGallery(g => g ? { ...g, idx: (g.idx + 1) % g.images.length } : null) }}
+                className="absolute right-4 top-1/2 -translate-y-1/2 text-white/70 hover:text-white p-2 bg-black/30 rounded-full"
+              >
+                <ChevronRight className="h-7 w-7" />
+              </button>
+              <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-1.5">
+                {gallery.images.map((_, i) => (
+                  <button
+                    key={i}
+                    onClick={(e) => { e.stopPropagation(); setGallery(g => g ? { ...g, idx: i } : null) }}
+                    className={`w-2 h-2 rounded-full transition-colors ${i === gallery.idx ? 'bg-white' : 'bg-white/40'}`}
+                  />
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
       {/* Modal checkout */}
       {checkoutOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4">
           <div className="absolute inset-0 bg-black/50" onClick={() => setCheckoutOpen(false)} />
-          <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col">
+          <div className="relative bg-white sm:rounded-2xl shadow-2xl w-full sm:max-w-lg h-[95dvh] sm:max-h-[90vh] flex flex-col rounded-t-2xl">
             <div className="flex items-center justify-between p-5 border-b bg-[#003DA5] rounded-t-2xl text-white flex-shrink-0">
               <h2 className="text-xl font-bold">Confirmar pedido</h2>
               <button onClick={() => setCheckoutOpen(false)} className="p-1 text-blue-200 hover:text-white rounded">
@@ -474,14 +559,12 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
               </div>
             </div>
 
-            <form onSubmit={handleOrder} className="p-5 space-y-4 overflow-y-auto flex-1">
-              <p className="text-sm text-gray-500">Todos los campos son obligatorios excepto las notas y el comprobante.</p>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5 col-span-2">
-                  <Label>Nombre completo</Label>
-                  <Input placeholder="Tu nombre" value={customer.nombre} onChange={(e) => setCustomer({ ...customer, nombre: e.target.value })} required />
-                </div>
+            <form onSubmit={handleOrder} className="p-4 sm:p-5 space-y-3 sm:space-y-4 overflow-y-auto flex-1">
+              <div className="space-y-1.5">
+                <Label>Nombre completo</Label>
+                <Input placeholder="Tu nombre" value={customer.nombre} onChange={(e) => setCustomer({ ...customer, nombre: e.target.value })} required />
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1.5">
                   <Label>WhatsApp / Teléfono</Label>
                   <Input
@@ -517,10 +600,10 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
                   <Label>Dirección de envío</Label>
                   <Input placeholder="Calle, barrio..." value={customer.direccion} onChange={(e) => setCustomer({ ...customer, direccion: e.target.value })} required />
                 </div>
-                <div className="space-y-1.5 col-span-2">
-                  <Label>Notas del pedido</Label>
-                  <Input placeholder="Ej: horario de entrega, indicaciones de acceso..." value={customer.notas} onChange={(e) => setCustomer({ ...customer, notas: e.target.value })} />
-                </div>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Notas del pedido</Label>
+                <Input placeholder="Ej: horario de entrega, indicaciones de acceso..." value={customer.notas} onChange={(e) => setCustomer({ ...customer, notas: e.target.value })} />
               </div>
 
               <div className="space-y-1.5">

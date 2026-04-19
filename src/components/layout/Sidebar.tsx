@@ -12,6 +12,7 @@ import {
   Store,
   Layers,
   Archive,
+  ChevronLeft,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { createClient } from '@/lib/supabase/client'
@@ -36,9 +37,10 @@ const adminItems = [
 
 interface SidebarProps {
   profile: Profile
+  onClose?: () => void
 }
 
-export default function Sidebar({ profile }: SidebarProps) {
+export default function Sidebar({ profile, onClose }: SidebarProps) {
   const pathname = usePathname()
   const router = useRouter()
   const supabase = createClient()
@@ -50,8 +52,17 @@ export default function Sidebar({ profile }: SidebarProps) {
 
   return (
     <aside className="flex h-full w-64 flex-col bg-gray-900 text-white">
-      <div className="flex h-16 items-center px-6 border-b border-gray-800">
+      <div className="flex h-16 items-center justify-between px-6 border-b border-gray-800">
         <span className="text-xl font-bold text-blue-400">Panini Stock</span>
+        {onClose && (
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-md text-gray-400 hover:bg-gray-800 hover:text-white transition-colors"
+            title="Cerrar menú"
+          >
+            <ChevronLeft className="h-5 w-5" />
+          </button>
+        )}
       </div>
 
       <nav className="flex-1 overflow-y-auto px-4 py-4 space-y-1">

@@ -10,11 +10,14 @@ import { Badge } from '@/components/ui/badge'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
-import { Plus, Pencil, Trash2, ArrowLeft, Filter, SlidersHorizontal, ImageIcon } from 'lucide-react'
+import { Plus, Pencil, Trash2, ArrowLeft, Filter, SlidersHorizontal, ImageIcon, X } from 'lucide-react'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import Link from 'next/link'
 import Image from 'next/image'
 import StockAdjustModal from '@/components/ui/stock-adjust-modal'
+
+interface ExistingImage { id: number; url: string; orden: number }
+interface PendingImage  { file: File; preview: string }
 
 export default function StickersStockClient({ stock, stickers }: { stock: any[]; stickers: any[] }) {
   const [open, setOpen] = useState(false)
@@ -26,20 +29,19 @@ export default function StickersStockClient({ stock, stickers }: { stock: any[];
     fecha_compra: new Date().toISOString().split('T')[0],
     es_repetida: 'false', notas: '',
   })
-  const [imageFile, setImageFile] = useState<File | null>(null)
-  const [imagePreview, setImagePreview] = useState<string | null>(null)
+  const [existingImages, setExistingImages] = useState<ExistingImage[]>([])
+  const [pendingImages, setPendingImages]   = useState<PendingImage[]>([])
+  const [removedIds, setRemovedIds]         = useState<number[]>([])
   const [loading, setLoading] = useState(false)
   const [adjustItem, setAdjustItem] = useState<any>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const supabase = createClient()
   const router = useRouter()
 
-  // Álbumes únicos derivados de los stickers del catálogo
   const albums = Array.from(
     new Map(stickers.map((s) => [s.album_id, s.albums])).entries()
   ).map(([id, album]) => ({ id, ...album }))
 
-  // Láminas filtradas por álbum seleccionado, ordenadas alfabéticamente por descripción
   const stickersFiltrados = selectedAlbum
     ? stickers
         .filter((s) => String(s.album_id) === selectedAlbum)
@@ -50,54 +52,97 @@ export default function StickersStockClient({ stock, stickers }: { stock: any[];
         })
     : []
 
+  function resetImages() {
+    setExistingImages([])
+    setPendingImages([])
+    setRemovedIds([])
+  }
+
   function openCreate() {
     setEditing(null)
     setSelectedAlbum('')
-    setImageFile(null)
-    setImagePreview(null)
+    resetImages()
     setForm({ sticker_id: '', cantidad: '1', precio_compra: '', precio_venta: '', fecha_compra: new Date().toISOString().split('T')[0], es_repetida: 'false', notas: '' })
     setOpen(true)
   }
 
-  function openEdit(item: any) {
+  async function openEdit(item: any) {
     setEditing(item)
     setSelectedAlbum(String(item.stickers?.album_id ?? ''))
-    setImageFile(null)
-    setImagePreview(item.imagen_url ?? null)
+    resetImages()
     setForm({
       sticker_id: String(item.sticker_id), cantidad: String(item.cantidad),
       precio_compra: String(item.precio_compra), precio_venta: String(item.precio_venta),
       fecha_compra: item.fecha_compra, es_repetida: String(item.es_repetida), notas: item.notas ?? '',
     })
     setOpen(true)
+    const { data: imgs } = await supabase
+      .from('stock_imagenes')
+      .select('id, url, orden')
+      .eq('tabla', 'stock_stickers')
+      .eq('referencia_id', item.id)
+      .order('orden')
+    setExistingImages(imgs ?? [])
   }
 
-  async function uploadImage(): Promise<string | null> {
-    if (!imageFile) return null
-    const ext = imageFile.name.split('.').pop()
-    const path = `stickers/${Date.now()}.${ext}`
-    const { error } = await supabase.storage.from('sticker-images').upload(path, imageFile, { upsert: true })
-    if (error) return null
-    const { data } = supabase.storage.from('sticker-images').getPublicUrl(path)
-    return data.publicUrl
+  function addFiles(files: FileList | null) {
+    if (!files) return
+    const news: PendingImage[] = Array.from(files).map(file => ({ file, preview: URL.createObjectURL(file) }))
+    setPendingImages(prev => [...prev, ...news])
+  }
+
+  function removePending(idx: number) {
+    setPendingImages(prev => prev.filter((_, i) => i !== idx))
+  }
+
+  function removeExisting(id: number) {
+    setRemovedIds(prev => [...prev, id])
+    setExistingImages(prev => prev.filter(img => img.id !== id))
+  }
+
+  async function saveImages(stockId: number) {
+    if (removedIds.length > 0) {
+      await supabase.from('stock_imagenes').delete().in('id', removedIds)
+    }
+    if (pendingImages.length > 0) {
+      const { data: last } = await supabase
+        .from('stock_imagenes').select('orden')
+        .eq('tabla', 'stock_stickers').eq('referencia_id', stockId)
+        .order('orden', { ascending: false }).limit(1)
+      let nextOrden = last?.[0] ? last[0].orden + 1 : 0
+      for (const { file } of pendingImages) {
+        const ext = file.name.split('.').pop()
+        const path = `stickers/${stockId}-${Date.now()}.${ext}`
+        const { error } = await supabase.storage.from('sticker-images').upload(path, file, { upsert: true })
+        if (!error) {
+          const { data } = supabase.storage.from('sticker-images').getPublicUrl(path)
+          await supabase.from('stock_imagenes').insert({ tabla: 'stock_stickers', referencia_id: stockId, url: data.publicUrl, orden: nextOrden++ })
+        }
+      }
+    }
+    const { data: first } = await supabase
+      .from('stock_imagenes').select('url')
+      .eq('tabla', 'stock_stickers').eq('referencia_id', stockId)
+      .order('orden').limit(1).maybeSingle()
+    await supabase.from('stock_stickers').update({ imagen_url: first?.url ?? null }).eq('id', stockId)
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setLoading(true)
     const { data: { user } } = await supabase.auth.getUser()
-    const imagenUrl = imageFile ? await uploadImage() : undefined
     const payload: any = {
       sticker_id: Number(form.sticker_id), cantidad: Number(form.cantidad),
       precio_compra: Number(form.precio_compra), precio_venta: Number(form.precio_venta),
       fecha_compra: form.fecha_compra, es_repetida: form.es_repetida === 'true',
       notas: form.notas || null, usuario_id: user!.id,
     }
-    if (imagenUrl) payload.imagen_url = imagenUrl
     if (editing) {
       await supabase.from('stock_stickers').update(payload).eq('id', editing.id)
+      await saveImages(editing.id)
     } else {
-      await supabase.from('stock_stickers').insert(payload)
+      const { data: inserted } = await supabase.from('stock_stickers').insert(payload).select('id').single()
+      if (inserted) await saveImages(inserted.id)
     }
     setLoading(false)
     setOpen(false)
@@ -125,6 +170,7 @@ export default function StickersStockClient({ stock, stickers }: { stock: any[];
       return
     }
     if (!confirm('¿Eliminar este registro?')) return
+    await supabase.from('stock_imagenes').delete().eq('tabla', 'stock_stickers').eq('referencia_id', id)
     await supabase.from('stock_stickers').delete().eq('id', id)
     router.refresh()
   }
@@ -134,6 +180,8 @@ export default function StickersStockClient({ stock, stickers }: { stock: any[];
     if (filterRepetida === 'normal') return !s.es_repetida
     return true
   })
+
+  const totalImages = existingImages.length + pendingImages.length
 
   return (
     <div className="space-y-6">
@@ -164,7 +212,7 @@ export default function StickersStockClient({ stock, stickers }: { stock: any[];
             <DialogTrigger asChild>
               <Button onClick={openCreate}><Plus className="h-4 w-4 mr-2" /> Agregar lámina</Button>
             </DialogTrigger>
-            <DialogContent className="max-w-md">
+            <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>{editing ? 'Editar lámina' : 'Nueva lámina en stock'}</DialogTitle>
               </DialogHeader>
@@ -173,10 +221,7 @@ export default function StickersStockClient({ stock, stickers }: { stock: any[];
                   <Label>Álbum</Label>
                   <Select
                     value={selectedAlbum}
-                    onValueChange={(v) => {
-                      setSelectedAlbum(v)
-                      setForm((f) => ({ ...f, sticker_id: '' }))
-                    }}
+                    onValueChange={(v) => { setSelectedAlbum(v); setForm((f) => ({ ...f, sticker_id: '' })) }}
                   >
                     <SelectTrigger><SelectValue placeholder="Seleccionar álbum..." /></SelectTrigger>
                     <SelectContent>
@@ -198,37 +243,74 @@ export default function StickersStockClient({ stock, stickers }: { stock: any[];
                     placeholder={selectedAlbum ? 'Buscar lámina...' : 'Primero elige un álbum'}
                   />
                 </div>
-                {/* Imagen */}
-                <div className="space-y-1.5">
-                  <Label>Imagen (opcional)</Label>
-                  <div
-                    onClick={() => fileInputRef.current?.click()}
-                    className="cursor-pointer border-2 border-dashed border-gray-300 rounded-lg p-3 text-center hover:border-blue-400 hover:bg-blue-50 transition-colors"
-                  >
-                    {imagePreview ? (
-                      <div className="relative w-full h-28">
-                        <Image src={imagePreview} alt="Preview" fill className="object-contain rounded" unoptimized />
-                      </div>
-                    ) : (
-                      <div className="flex flex-col items-center gap-1 text-gray-400">
-                        <ImageIcon className="h-6 w-6" />
-                        <span className="text-xs">Click para subir imagen</span>
-                      </div>
-                    )}
+
+                {/* Imágenes múltiples */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label>Imágenes ({totalImages})</Label>
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1"
+                    >
+                      <Plus className="h-3 w-3" /> Agregar imágenes
+                    </button>
                   </div>
                   <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0]
-                      if (!file) return
-                      setImageFile(file)
-                      setImagePreview(URL.createObjectURL(file))
-                    }}
+                    ref={fileInputRef} type="file" accept="image/*" multiple className="hidden"
+                    onChange={(e) => addFiles(e.target.files)}
                   />
-                  {imageFile && <p className="text-xs text-green-600">✓ {imageFile.name}</p>}
+                  {totalImages === 0 ? (
+                    <div
+                      onClick={() => fileInputRef.current?.click()}
+                      className="cursor-pointer border-2 border-dashed border-gray-300 rounded-lg p-4 text-center hover:border-blue-400 hover:bg-blue-50 transition-colors"
+                    >
+                      <div className="flex flex-col items-center gap-1 text-gray-400">
+                        <ImageIcon className="h-6 w-6" />
+                        <span className="text-xs">Click para subir imágenes</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-4 gap-2">
+                      {existingImages.map((img, idx) => (
+                        <div key={img.id} className="relative group">
+                          <div className="relative h-16 w-full rounded overflow-hidden bg-gray-100">
+                            <Image src={img.url} alt="" fill className="object-cover" unoptimized />
+                          </div>
+                          {idx === 0 && (
+                            <span className="absolute bottom-0 left-0 right-0 text-center text-[9px] bg-blue-600 text-white leading-4">Principal</span>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => removeExisting(img.id)}
+                            className="absolute top-0.5 right-0.5 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                          >
+                            <X className="h-2.5 w-2.5" />
+                          </button>
+                        </div>
+                      ))}
+                      {pendingImages.map((img, idx) => (
+                        <div key={idx} className="relative group">
+                          <div className="relative h-16 w-full rounded overflow-hidden bg-gray-100 border-2 border-dashed border-blue-300">
+                            <Image src={img.preview} alt="" fill className="object-cover" unoptimized />
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => removePending(idx)}
+                            className="absolute top-0.5 right-0.5 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                          >
+                            <X className="h-2.5 w-2.5" />
+                          </button>
+                        </div>
+                      ))}
+                      <div
+                        onClick={() => fileInputRef.current?.click()}
+                        className="h-16 w-full rounded border-2 border-dashed border-gray-300 flex items-center justify-center cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition-colors"
+                      >
+                        <Plus className="h-4 w-4 text-gray-400" />
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
@@ -373,7 +455,7 @@ function StickerSearch({ stickers, value, onChange, disabled, placeholder }: {
 
   const selected = stickers.find((s) => String(s.id) === value)
 
-  const filtered = query.length === 0
+  const filteredS = query.length === 0
     ? stickers
     : stickers.filter((s) => {
         const label = s.descripcion ? `${s.descripcion}` : `#${s.numero}`
@@ -391,18 +473,6 @@ function StickerSearch({ stickers, value, onChange, disabled, placeholder }: {
     return () => document.removeEventListener('mousedown', handleClick)
   }, [])
 
-  function selectItem(s: any) {
-    onChange(String(s.id))
-    setQuery('')
-    setOpen(false)
-  }
-
-  function handleInputChange(e: React.ChangeEvent<HTMLInputElement>) {
-    setQuery(e.target.value)
-    onChange('')
-    setOpen(true)
-  }
-
   return (
     <div ref={containerRef} className="relative">
       <input
@@ -410,19 +480,19 @@ function StickerSearch({ stickers, value, onChange, disabled, placeholder }: {
         disabled={disabled}
         placeholder={selected ? (selected.descripcion ?? `#${selected.numero}`) : placeholder}
         value={open ? query : (selected ? (selected.descripcion ?? `#${selected.numero}`) : '')}
-        onChange={handleInputChange}
+        onChange={(e) => { setQuery(e.target.value); onChange(''); setOpen(true) }}
         onFocus={() => { if (!disabled) setOpen(true) }}
         className="w-full h-10 rounded-md border border-gray-300 bg-white px-3 text-sm text-gray-700 outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed placeholder:text-gray-400"
       />
       {open && !disabled && (
         <div className="absolute z-50 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg max-h-56 overflow-y-auto">
-          {filtered.length === 0 ? (
+          {filteredS.length === 0 ? (
             <p className="px-3 py-2 text-sm text-gray-400">Sin resultados</p>
-          ) : filtered.map((s) => (
+          ) : filteredS.map((s) => (
             <button
               key={s.id}
               type="button"
-              onMouseDown={() => selectItem(s)}
+              onMouseDown={() => { onChange(String(s.id)); setQuery(''); setOpen(false) }}
               className={`w-full text-left px-3 py-2 text-sm hover:bg-blue-50 hover:text-blue-700 transition-colors ${String(s.id) === value ? 'bg-blue-50 text-blue-700 font-medium' : 'text-gray-700'}`}
             >
               {s.descripcion ?? `#${s.numero}`}

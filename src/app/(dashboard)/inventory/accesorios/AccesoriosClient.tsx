@@ -10,11 +10,14 @@ import { Badge } from '@/components/ui/badge'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
-import { Plus, Pencil, Trash2, ArrowLeft, ImageIcon, SlidersHorizontal } from 'lucide-react'
+import { Plus, Pencil, Trash2, ArrowLeft, ImageIcon, SlidersHorizontal, X } from 'lucide-react'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import Link from 'next/link'
 import Image from 'next/image'
 import StockAdjustModal from '@/components/ui/stock-adjust-modal'
+
+interface ExistingImage { id: number; url: string; orden: number }
+interface PendingImage  { file: File; preview: string }
 
 const condicionColors: Record<string, string> = {
   nuevo: 'success', sellado: 'default', usado: 'warning',
@@ -29,15 +32,21 @@ export default function AccesoriosClient({ stock, albums }: { stock: any[]; albu
     fecha_compra: new Date().toISOString().split('T')[0],
     condicion: 'nuevo', notas: '',
   })
-  const [imageFile, setImageFile] = useState<File | null>(null)
-  const [imagePreview, setImagePreview] = useState<string | null>(null)
-  const [uploading, setUploading] = useState(false)
+  const [existingImages, setExistingImages] = useState<ExistingImage[]>([])
+  const [pendingImages, setPendingImages]   = useState<PendingImage[]>([])
+  const [removedIds, setRemovedIds]         = useState<number[]>([])
   const [loading, setLoading] = useState(false)
   const [filterTipo, setFilterTipo] = useState('all')
   const [adjustItem, setAdjustItem] = useState<any>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const supabase = createClient()
   const router = useRouter()
+
+  function resetImages() {
+    setExistingImages([])
+    setPendingImages([])
+    setRemovedIds([])
+  }
 
   function openCreate() {
     setEditing(null)
@@ -47,12 +56,11 @@ export default function AccesoriosClient({ stock, albums }: { stock: any[]; albu
       fecha_compra: new Date().toISOString().split('T')[0],
       condicion: 'nuevo', notas: '',
     })
-    setImageFile(null)
-    setImagePreview(null)
+    resetImages()
     setOpen(true)
   }
 
-  function openEdit(item: any) {
+  async function openEdit(item: any) {
     setEditing(item)
     setForm({
       album_id: String(item.album_id),
@@ -65,35 +73,63 @@ export default function AccesoriosClient({ stock, albums }: { stock: any[]; albu
       condicion: item.condicion,
       notas: item.notas ?? '',
     })
-    setImageFile(null)
-    setImagePreview(item.imagen_url ?? null)
+    resetImages()
     setOpen(true)
+    const { data: imgs } = await supabase
+      .from('stock_imagenes')
+      .select('id, url, orden')
+      .eq('tabla', 'stock_accesorios')
+      .eq('referencia_id', item.id)
+      .order('orden')
+    setExistingImages(imgs ?? [])
   }
 
-  function handleImageChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    if (!file) return
-    setImageFile(file)
-    setImagePreview(URL.createObjectURL(file))
+  function addFiles(files: FileList | null) {
+    if (!files) return
+    const news: PendingImage[] = Array.from(files).map(file => ({ file, preview: URL.createObjectURL(file) }))
+    setPendingImages(prev => [...prev, ...news])
   }
 
-  async function uploadImage(id: number): Promise<string | null> {
-    if (!imageFile) return null
-    setUploading(true)
-    const ext = imageFile.name.split('.').pop()
-    const path = `accesorios/${id}-${Date.now()}.${ext}`
-    const { error } = await supabase.storage.from('album-images').upload(path, imageFile, { upsert: true })
-    setUploading(false)
-    if (error) return null
-    const { data } = supabase.storage.from('album-images').getPublicUrl(path)
-    return data.publicUrl
+  function removePending(idx: number) {
+    setPendingImages(prev => prev.filter((_, i) => i !== idx))
+  }
+
+  function removeExisting(id: number) {
+    setRemovedIds(prev => [...prev, id])
+    setExistingImages(prev => prev.filter(img => img.id !== id))
+  }
+
+  async function saveImages(stockId: number) {
+    if (removedIds.length > 0) {
+      await supabase.from('stock_imagenes').delete().in('id', removedIds)
+    }
+    if (pendingImages.length > 0) {
+      const { data: last } = await supabase
+        .from('stock_imagenes').select('orden')
+        .eq('tabla', 'stock_accesorios').eq('referencia_id', stockId)
+        .order('orden', { ascending: false }).limit(1)
+      let nextOrden = last?.[0] ? last[0].orden + 1 : 0
+      for (const { file } of pendingImages) {
+        const ext = file.name.split('.').pop()
+        const path = `accesorios/${stockId}-${Date.now()}.${ext}`
+        const { error } = await supabase.storage.from('album-images').upload(path, file, { upsert: true })
+        if (!error) {
+          const { data } = supabase.storage.from('album-images').getPublicUrl(path)
+          await supabase.from('stock_imagenes').insert({ tabla: 'stock_accesorios', referencia_id: stockId, url: data.publicUrl, orden: nextOrden++ })
+        }
+      }
+    }
+    const { data: first } = await supabase
+      .from('stock_imagenes').select('url')
+      .eq('tabla', 'stock_accesorios').eq('referencia_id', stockId)
+      .order('orden').limit(1).maybeSingle()
+    await supabase.from('stock_accesorios').update({ imagen_url: first?.url ?? null }).eq('id', stockId)
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setLoading(true)
     const { data: { user } } = await supabase.auth.getUser()
-
     const payload: any = {
       album_id: Number(form.album_id),
       tipo: form.tipo,
@@ -106,23 +142,15 @@ export default function AccesoriosClient({ stock, albums }: { stock: any[]; albu
       notas: form.notas || null,
       usuario_id: user!.id,
     }
-
     if (editing) {
       const { error } = await supabase.from('stock_accesorios').update(payload).eq('id', editing.id)
       if (error) { alert(`Error al actualizar: ${error.message}`); setLoading(false); return }
-      if (imageFile) {
-        const url = await uploadImage(editing.id)
-        if (url) await supabase.from('stock_accesorios').update({ imagen_url: url }).eq('id', editing.id)
-      }
+      await saveImages(editing.id)
     } else {
       const { data: inserted, error } = await supabase.from('stock_accesorios').insert(payload).select('id').single()
       if (error) { alert(`Error al guardar: ${error.message}`); setLoading(false); return }
-      if (imageFile && inserted) {
-        const url = await uploadImage(inserted.id)
-        if (url) await supabase.from('stock_accesorios').update({ imagen_url: url }).eq('id', inserted.id)
-      }
+      if (inserted) await saveImages(inserted.id)
     }
-
     setLoading(false)
     setOpen(false)
     router.refresh()
@@ -149,14 +177,15 @@ export default function AccesoriosClient({ stock, albums }: { stock: any[]; albu
       return
     }
     if (!confirm('¿Eliminar este registro de stock?')) return
+    await supabase.from('stock_imagenes').delete().eq('tabla', 'stock_accesorios').eq('referencia_id', id)
     await supabase.from('stock_accesorios').delete().eq('id', id)
     router.refresh()
   }
 
   const filtered = filterTipo === 'all' ? stock : stock.filter(s => s.tipo === filterTipo)
-
   const totalSobres = stock.filter(s => s.tipo === 'sobre').reduce((a, s) => a + s.cantidad, 0)
   const totalCajas  = stock.filter(s => s.tipo === 'caja').reduce((a, s) => a + s.cantidad, 0)
+  const totalImages = existingImages.length + pendingImages.length
 
   return (
     <div className="space-y-6">
@@ -195,7 +224,6 @@ export default function AccesoriosClient({ stock, albums }: { stock: any[]; albu
                 <DialogTitle>{editing ? 'Editar accesorio' : 'Nuevo accesorio'}</DialogTitle>
               </DialogHeader>
               <form onSubmit={handleSubmit} className="space-y-4 mt-2">
-
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1.5">
                     <Label>Tipo</Label>
@@ -232,26 +260,74 @@ export default function AccesoriosClient({ stock, albums }: { stock: any[]; albu
                   </Select>
                 </div>
 
-                <div className="space-y-1.5">
-                  <Label>Imagen</Label>
-                  <div
-                    onClick={() => fileInputRef.current?.click()}
-                    className="cursor-pointer border-2 border-dashed border-gray-300 rounded-lg p-4 text-center hover:border-blue-400 hover:bg-blue-50 transition-colors"
-                  >
-                    {imagePreview ? (
-                      <div className="relative w-full h-32">
-                        <Image src={imagePreview} alt="Preview" fill className="object-contain rounded" unoptimized />
-                      </div>
-                    ) : (
+                {/* Imágenes múltiples */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label>Imágenes ({totalImages})</Label>
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1"
+                    >
+                      <Plus className="h-3 w-3" /> Agregar imágenes
+                    </button>
+                  </div>
+                  <input
+                    ref={fileInputRef} type="file" accept="image/*" multiple className="hidden"
+                    onChange={(e) => addFiles(e.target.files)}
+                  />
+                  {totalImages === 0 ? (
+                    <div
+                      onClick={() => fileInputRef.current?.click()}
+                      className="cursor-pointer border-2 border-dashed border-gray-300 rounded-lg p-4 text-center hover:border-blue-400 hover:bg-blue-50 transition-colors"
+                    >
                       <div className="flex flex-col items-center gap-2 text-gray-400">
                         <ImageIcon className="h-8 w-8" />
-                        <span className="text-sm">Click para subir imagen</span>
-                        <span className="text-xs">PNG, JPG hasta 5MB</span>
+                        <span className="text-sm">Click para subir imágenes</span>
+                        <span className="text-xs">PNG, JPG hasta 5MB · selección múltiple</span>
                       </div>
-                    )}
-                  </div>
-                  <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageChange} />
-                  {imageFile && <p className="text-xs text-green-600">Imagen lista: {imageFile.name}</p>}
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-4 gap-2">
+                      {existingImages.map((img, idx) => (
+                        <div key={img.id} className="relative group">
+                          <div className="relative h-16 w-full rounded overflow-hidden bg-gray-100">
+                            <Image src={img.url} alt="" fill className="object-cover" unoptimized />
+                          </div>
+                          {idx === 0 && (
+                            <span className="absolute bottom-0 left-0 right-0 text-center text-[9px] bg-blue-600 text-white leading-4">Principal</span>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => removeExisting(img.id)}
+                            className="absolute top-0.5 right-0.5 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                          >
+                            <X className="h-2.5 w-2.5" />
+                          </button>
+                        </div>
+                      ))}
+                      {pendingImages.map((img, idx) => (
+                        <div key={idx} className="relative group">
+                          <div className="relative h-16 w-full rounded overflow-hidden bg-gray-100 border-2 border-dashed border-blue-300">
+                            <Image src={img.preview} alt="" fill className="object-cover" unoptimized />
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => removePending(idx)}
+                            className="absolute top-0.5 right-0.5 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                          >
+                            <X className="h-2.5 w-2.5" />
+                          </button>
+                        </div>
+                      ))}
+                      <div
+                        onClick={() => fileInputRef.current?.click()}
+                        className="h-16 w-full rounded border-2 border-dashed border-gray-300 flex items-center justify-center cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition-colors"
+                      >
+                        <Plus className="h-4 w-4 text-gray-400" />
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
@@ -294,8 +370,8 @@ export default function AccesoriosClient({ stock, albums }: { stock: any[]; albu
                 </div>
 
                 <div className="flex gap-3 pt-2">
-                  <Button type="submit" disabled={loading || uploading} className="flex-1">
-                    {uploading ? 'Subiendo imagen...' : loading ? 'Guardando...' : editing ? 'Actualizar' : 'Agregar'}
+                  <Button type="submit" disabled={loading} className="flex-1">
+                    {loading ? 'Guardando...' : editing ? 'Actualizar' : 'Agregar'}
                   </Button>
                   <Button type="button" variant="outline" onClick={() => setOpen(false)} className="flex-1">Cancelar</Button>
                 </div>

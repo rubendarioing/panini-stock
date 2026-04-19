@@ -10,6 +10,7 @@ export default async function StorePage() {
     { data: combos },
     { data: collectionTypes },
     { data: accesorioStock },
+    { data: stockImagenes },
   ] = await Promise.all([
     supabase
       .from('stock_albums')
@@ -34,6 +35,10 @@ export default async function StorePage() {
       .select('id, cantidad, precio_venta, tipo, cantidad_contenido, imagen_url, notas, albums(id, nombre, imagen_url, anio, collection_types(nombre))')
       .gt('cantidad', 0)
       .order('id'),
+    supabase
+      .from('stock_imagenes')
+      .select('tabla, referencia_id, url, orden')
+      .order('orden'),
   ])
 
   return (
@@ -43,6 +48,7 @@ export default async function StorePage() {
       combos={combos ?? []}
       collectionTypes={collectionTypes ?? []}
       accesorioStock={accesorioStock ?? []}
+      stockImagenes={stockImagenes ?? []}
     />
   )
 }
