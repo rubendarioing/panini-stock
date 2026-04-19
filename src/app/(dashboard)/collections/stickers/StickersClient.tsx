@@ -141,7 +141,7 @@ export default function StickersClient({ albums, stickers }: { albums: any[]; st
     const total = to - from + 1
     const yaExisten = Array.from({ length: total }, (_, i) => from + i).filter((n) => {
       const desc = rangePrefix ? `${rangePrefix} ${n}` : null
-      return desc ? existingDescriptions.has(desc) : existingNumbers.has(n)
+      return desc ? existingDescriptions.has(desc) : existingNumbers.has(String(n))
     }).length
     return { total, nuevas: total - yaExisten, yaExisten }
   }, [rangeFrom, rangeTo, rangePrefix, existingNumbers, existingDescriptions])
