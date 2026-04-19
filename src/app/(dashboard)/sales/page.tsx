@@ -15,7 +15,7 @@ export default async function SalesPage() {
       .select('id, cantidad, precio_venta, estado, albums(nombre, anio, collection_types(nombre))'),
     supabase
       .from('stock_stickers')
-      .select('id, cantidad, precio_venta, stickers(numero, descripcion, albums(nombre))'),
+      .select('id, cantidad, precio_venta, stickers(numero, descripcion, albums(nombre, anio, collection_types(nombre)))'),
     supabase.from('combos').select('id, nombre, precio_total').eq('activo', true),
     supabase
       .from('stock_accesorios')

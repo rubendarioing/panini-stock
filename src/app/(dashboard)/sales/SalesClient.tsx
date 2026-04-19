@@ -135,24 +135,34 @@ export default function SalesClient({ sales, albumStock, stickerStock, combos, a
     router.refresh()
   }
 
-  function getItemLabel(item: any): string {
+  function getItemLabel(item: any, mode: 'short' | 'full' = 'short'): string {
     if (item.tipo === 'album') {
       const s = albumStock.find((a: any) => a.id === item.referencia_id)
       if (!s) return 'Álbum'
+      const col = s.albums?.collection_types?.nombre ?? ''
+      const nombre = s.albums?.nombre ?? ''
+      const anio = s.albums?.anio ?? ''
+      if (mode === 'short') return `${nombre} ${anio}`.trim()
       const estadoLabel = s.estado === 'lleno' ? 'Lleno' : s.estado === 'set_a_pegar' ? 'Set a Pegar' : 'Vacío'
-      return `${s.albums?.nombre} ${s.albums?.anio} — ${estadoLabel}`
+      return `Álbum ${nombre} ${anio}${col ? ` — ${col}` : ''} · Estado: ${estadoLabel}`
     }
     if (item.tipo === 'accesorio') {
       const s = accesorioStock.find((a: any) => a.id === item.referencia_id)
       if (!s) return 'Accesorio'
       const tipoLabel = s.tipo === 'sobre' ? 'Sobre' : 'Caja Sellada'
-      const contenido = s.cantidad_contenido ? ` · ${s.cantidad_contenido} ${s.tipo === 'sobre' ? 'láminas' : 'sobres'}` : ''
-      return `${tipoLabel}${contenido} — ${s.albums?.nombre} ${s.albums?.anio}`
+      const contenido = s.cantidad_contenido ? ` (${s.cantidad_contenido} ${s.tipo === 'sobre' ? 'láminas' : 'sobres'})` : ''
+      const album = `${s.albums?.nombre ?? ''} ${s.albums?.anio ?? ''}`.trim()
+      if (mode === 'short') return `${tipoLabel}${contenido} — ${album}`
+      return `${tipoLabel}${contenido} de ${album}`
     }
     if (item.tipo === 'sticker') {
       const s = stickerStock.find((a: any) => a.id === item.referencia_id)
       const st = s?.stickers
-      return st ? `${st.descripcion ?? `#${st.numero}`} — ${st.albums?.nombre}` : 'Lámina'
+      if (!st) return 'Lámina'
+      const col = st.albums?.collection_types?.nombre ?? ''
+      const album = `${st.albums?.nombre ?? ''} ${st.albums?.anio ?? ''}`.trim()
+      if (mode === 'short') return `Lámina #${st.numero}${st.descripcion ? ` — ${st.descripcion}` : ''}`
+      return `Lámina #${st.numero}${st.descripcion ? ` "${st.descripcion}"` : ''} · ${album}${col ? ` — ${col}` : ''}`
     }
     if (item.tipo === 'combo') {
       const c = combos.find((a: any) => a.id === item.referencia_id)
@@ -413,7 +423,7 @@ export default function SalesClient({ sales, albumStock, stickerStock, combos, a
                   {detailSale.sale_items?.map((item: any, idx: number) => (
                     <div key={idx} className="flex justify-between items-start py-2 border-b border-gray-100 last:border-0 gap-3">
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-gray-900 truncate">{getItemLabel(item)}</p>
+                        <p className="text-sm font-medium text-gray-900">{getItemLabel(item, 'full')}</p>
                         <p className="text-xs text-gray-400 capitalize">{item.tipo} · {item.cantidad} und. × {formatCurrency(item.precio_unitario)}</p>
                       </div>
                       <span className="text-sm font-semibold text-gray-800 whitespace-nowrap">{formatCurrency(item.subtotal)}</span>
