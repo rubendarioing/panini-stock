@@ -14,7 +14,7 @@ export default async function StorePage() {
   ] = await Promise.all([
     supabase
       .from('stock_albums')
-      .select('id, cantidad, precio_venta, estado, condicion, notas, albums(id, nombre, imagen_url, edicion, total_laminas, anio, type_id, collection_types(nombre, id))')
+      .select('id, cantidad, precio_venta, estado, condicion, notas, imagen_url, albums(id, nombre, imagen_url, edicion, total_laminas, anio, type_id, collection_types(nombre, id))')
       .gt('cantidad', 0)
       .order('id'),
     supabase

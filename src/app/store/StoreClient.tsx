@@ -79,20 +79,16 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
         return
       }
       // Leer estado actual sin mutar para decidir si el item existe
+      let found = false
       setter(prev => {
         const idx = prev.findIndex((s: any) => s.id === row.id)
-        if (idx < 0) return prev // no estaba → router.refresh() se llama abajo
+        if (idx < 0) return prev
+        found = true
         const updated = [...prev]
         updated[idx] = { ...updated[idx], cantidad: row.cantidad, precio_venta: row.precio_venta }
         return updated
       })
-      // Verificar existencia con una lectura directa del DOM state no es posible,
-      // por eso usamos un segundo setter con función para detectar si estaba o no
-      setter(prev => {
-        const exists = prev.some((s: any) => s.id === row.id)
-        if (!exists) router.refresh()
-        return prev
-      })
+      if (!found) router.refresh()
       setCart(prev => prev.map(i =>
         i.tipo === tipo && i.referencia_id === row.id
           ? { ...i, stock_disponible: row.cantidad }
@@ -174,6 +170,8 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
     liveAlbumStock.forEach((s: any) => {
       const badge = s.estado === 'lleno' ? 'Lleno' : s.estado === 'set_a_pegar' ? 'Set a Pegar' : 'Vacío'
       const badgeVariant = s.estado === 'lleno' ? 'success' : s.estado === 'set_a_pegar' ? 'warning' : 'secondary'
+      const imgs = imagenesMap[`stock_albums-${s.id}`] ?? []
+      const mainImg = imgs[0] ?? s.imagen_url ?? s.albums?.imagen_url ?? null
       list.push({
         id: `album-${s.id}`,
         tipo: 'album',
@@ -182,8 +180,8 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
         sublabel: `${s.albums?.collection_types?.nombre ?? ''} ${s.albums?.anio ?? ''}`.trim(),
         categoria: s.albums?.collection_types?.nombre ?? 'Otros',
         type_id: s.albums?.type_id,
-        imagen_url: s.albums?.imagen_url,
-        imagenes: s.albums?.imagen_url ? [s.albums.imagen_url] : [],
+        imagen_url: mainImg,
+        imagenes: imgs.length > 0 ? imgs : (mainImg ? [mainImg] : []),
         notas: s.notas ?? '',
         precio: s.precio_venta,
         stock: s.cantidad,
