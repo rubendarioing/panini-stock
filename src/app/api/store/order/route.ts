@@ -163,7 +163,7 @@ export async function POST(request: Request) {
   }
 
   // Insertar items
-  await supabase.from('sale_items').insert(
+  const { error: itemsError } = await supabase.from('sale_items').insert(
     items.map((i: any) => ({
       sale_id: sale.id,
       tipo: i.tipo,
@@ -173,6 +173,12 @@ export async function POST(request: Request) {
       subtotal: i.subtotal,
     }))
   )
+
+  if (itemsError) {
+    // Revertir la venta si no se pudieron guardar los items
+    await supabase.from('sales').delete().eq('id', sale.id)
+    return NextResponse.json({ error: `Error al guardar los productos del pedido: ${itemsError.message}` }, { status: 500 })
+  }
 
   // Descontar stock
   for (const item of items) {
