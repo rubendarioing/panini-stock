@@ -13,17 +13,25 @@ import { Textarea } from '@/components/ui/textarea'
 import { Plus, Trash2, Package2, Pencil, ImageIcon } from 'lucide-react'
 import Image from 'next/image'
 import { formatCurrency } from '@/lib/utils'
+import { labelForVariante } from '@/lib/product-labels'
 
-interface ComboItemForm { tipo: string; ref: string; cantidad: number; label: string; precio: number }
+interface ComboItemForm { variante_id: string; cantidad: number; label: string; precio: number }
 
-export default function CombosClient({ combos, albumStock, stickerStock, accesorioStock }: {
-  combos: any[]; albumStock: any[]; stickerStock: any[]; accesorioStock: any[]
+const CATEGORIAS = [
+  { value: 'album', label: 'Álbum' },
+  { value: 'lamina', label: 'Lámina' },
+  { value: 'sobre', label: 'Sobre' },
+  { value: 'caja', label: 'Caja' },
+]
+
+export default function CombosClient({ combos, variantes }: {
+  combos: any[]; variantes: any[]
 }) {
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState<any>(null)
   const [form, setForm] = useState({ nombre: '', descripcion: '', precio_total: '' })
   const [items, setItems] = useState<ComboItemForm[]>([])
-  const [itemType, setItemType] = useState('album')
+  const [itemCategoria, setItemCategoria] = useState('album')
   const [itemRef, setItemRef] = useState('')
   const [itemQty, setItemQty] = useState('1')
   const [loading, setLoading] = useState(false)
@@ -47,29 +55,20 @@ export default function CombosClient({ combos, albumStock, stickerStock, accesor
   }
 
   function getOptions() {
-    if (itemType === 'album') return albumStock.map((s: any) => ({
-      value: String(s.id),
-      label: `${s.albums?.collection_types?.nombre} ${s.albums?.anio} — ${s.albums?.nombre} (${s.estado === 'lleno' ? 'Lleno' : s.estado === 'set_a_pegar' ? 'Set a Pegar' : 'Vacío'})`,
-      precio: s.precio_venta,
-    }))
-    if (itemType === 'sticker') return stickerStock.map((s: any) => ({
-      value: String(s.id),
-      label: `${s.stickers?.descripcion ?? `#${s.stickers?.numero}`} — ${s.stickers?.albums?.nombre}`,
-      precio: s.precio_venta,
-    }))
-    if (itemType === 'accesorio') return accesorioStock.map((s: any) => ({
-      value: String(s.id),
-      label: `${s.tipo === 'sobre' ? 'Sobre' : 'Caja Sellada'}${s.cantidad_contenido ? ` (${s.cantidad_contenido} ${s.tipo === 'sobre' ? 'láminas' : 'sobres'})` : ''} — ${s.albums?.nombre} ${s.albums?.anio}`,
-      precio: s.precio_venta,
-    }))
-    return []
+    return variantes
+      .filter((v: any) => v.productos?.categorias?.slug === itemCategoria)
+      .map((v: any) => ({
+        value: String(v.id),
+        label: labelForVariante(v),
+        precio: v.precio_venta,
+      }))
   }
 
   function addItem() {
     if (!itemRef) return
     const found = getOptions().find((o) => o.value === itemRef)
     if (!found) return
-    setItems([...items, { tipo: itemType, ref: itemRef, cantidad: Number(itemQty), label: found.label, precio: found.precio }])
+    setItems([...items, { variante_id: itemRef, cantidad: Number(itemQty), label: found.label, precio: found.precio }])
     setItemRef('')
     setItemQty('1')
   }
@@ -118,15 +117,12 @@ export default function CombosClient({ combos, albumStock, stickerStock, accesor
           if (url) await supabase.from('combos').update({ imagen_url: url }).eq('id', combo.id)
         }
         if (items.length > 0) {
-          const comboItems = items.map((i) => ({
+          const comboComponentes = items.map((i) => ({
             combo_id: combo.id,
-            tipo: i.tipo,
-            stock_album_id:     i.tipo === 'album'     ? Number(i.ref) : null,
-            stock_sticker_id:   i.tipo === 'sticker'   ? Number(i.ref) : null,
-            stock_accesorio_id: i.tipo === 'accesorio' ? Number(i.ref) : null,
+            variante_id: Number(i.variante_id),
             cantidad: i.cantidad,
           }))
-          await supabase.from('combo_items').insert(comboItems)
+          await supabase.from('combo_componentes').insert(comboComponentes)
         }
       }
     }
@@ -172,12 +168,12 @@ export default function CombosClient({ combos, albumStock, stickerStock, accesor
                 <div className="border border-gray-200 rounded-lg p-3 space-y-3">
                   <p className="text-sm font-medium text-gray-700">Agregar ítems al combo</p>
                   <div className="grid grid-cols-3 gap-2">
-                    <Select value={itemType} onValueChange={(v) => { setItemType(v); setItemRef('') }}>
+                    <Select value={itemCategoria} onValueChange={(v) => { setItemCategoria(v); setItemRef('') }}>
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="album">Álbum</SelectItem>
-                        <SelectItem value="sticker">Lámina</SelectItem>
-                        <SelectItem value="accesorio">Accesorio</SelectItem>
+                        {CATEGORIAS.map((c) => (
+                          <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                     <Select value={itemRef} onValueChange={setItemRef}>
@@ -277,7 +273,7 @@ export default function CombosClient({ combos, albumStock, stickerStock, accesor
               </div>
             </div>
             <p className="text-2xl font-bold text-green-600 mb-3">{formatCurrency(combo.precio_total)}</p>
-            <p className="text-xs text-gray-400 mb-4">{combo.combo_items?.length ?? 0} ítems en el combo</p>
+            <p className="text-xs text-gray-400 mb-4">{combo.combo_componentes?.length ?? 0} ítems en el combo</p>
             <div className="flex gap-2">
               <Button size="sm" variant="outline" onClick={() => openEdit(combo)} className="flex-1">
                 <Pencil className="h-3.5 w-3.5 mr-1" /> Editar

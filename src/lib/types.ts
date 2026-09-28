@@ -103,3 +103,90 @@ export interface SaleItem {
   precio_unitario: number
   subtotal: number
 }
+
+// ---------------------------------------------------------------------------
+// Modelo unificado producto/variante/inventario (fase 1 de la migración,
+// ver supabase/migrations/011..021). Coexiste con los tipos legacy de arriba
+// hasta que las páginas se migren en la fase 2 (cutover).
+// ---------------------------------------------------------------------------
+
+export interface Categoria {
+  id: number
+  nombre: string
+  slug: string | null
+  descripcion: string | null
+  activo: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface Producto {
+  id: number
+  categoria_id: number
+  type_id: number | null
+  anio: number | null
+  nombre: string
+  descripcion: string | null
+  imagen_url: string | null
+  activo: boolean
+  legacy_table: string | null
+  legacy_id: number | null
+  categorias?: Categoria
+  collection_types?: CollectionType
+}
+
+export interface ProductoVariante {
+  id: number
+  producto_id: number
+  sku: string | null
+  nombre_variante: string | null
+  condicion: string | null
+  estado: string | null
+  es_repetida: boolean | null
+  unidades_contenidas: number | null
+  precio_compra: number | null
+  precio_venta: number | null
+  imagen_url: string | null
+  notas: string | null
+  fecha_compra: string | null
+  usuario_id: string | null
+  activo: boolean
+  legacy_table: string | null
+  legacy_id: number | null
+  productos?: Producto
+  inventario?: Inventario
+  producto_variante_imagenes?: ProductoVarianteImagen[]
+}
+
+export interface Inventario {
+  id: number
+  variante_id: number
+  cantidad: number
+  updated_at: string
+}
+
+export interface ProductoVarianteImagen {
+  id: number
+  variante_id: number
+  url: string
+  orden: number
+}
+
+export interface ComboComponente {
+  id: number
+  combo_id: number
+  variante_id: number
+  cantidad: number
+  producto_variantes?: ProductoVariante & { productos?: Producto }
+}
+
+export interface SaleItemV2 {
+  id: number
+  sale_id: number
+  variante_id: number
+  cantidad: number
+  precio_unitario: number
+  costo_unitario: number | null
+  subtotal: number
+  producto_variantes?: ProductoVariante & { productos?: Producto }
+}

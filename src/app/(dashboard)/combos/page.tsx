@@ -4,31 +4,25 @@ import CombosClient from './CombosClient'
 export default async function CombosPage() {
   const supabase = await createClient()
 
-  const [{ data: combos }, { data: albumStock }, { data: stickerStock }, { data: accesorioStock }] = await Promise.all([
+  const [{ data: combos }, { data: variantes }] = await Promise.all([
     supabase
       .from('combos')
-      .select('*, combo_items(*), imagen_url')
+      .select('*, combo_componentes(*)')
       .order('nombre'),
     supabase
-      .from('stock_albums')
-      .select('id, cantidad, precio_venta, estado, albums(nombre, anio, collection_types(nombre))')
-      .gt('cantidad', 0),
-    supabase
-      .from('stock_stickers')
-      .select('id, cantidad, precio_venta, stickers(numero, descripcion, albums(nombre))')
-      .gt('cantidad', 0),
-    supabase
-      .from('stock_accesorios')
-      .select('id, cantidad, precio_venta, tipo, cantidad_contenido, albums(nombre, anio)')
-      .gt('cantidad', 0),
+      .from('producto_variantes')
+      .select(`
+        id, estado, es_repetida, unidades_contenidas, precio_venta,
+        inventario!inner ( cantidad ),
+        productos ( nombre, anio, numero, descripcion, categorias ( slug ), collection_types ( nombre ) )
+      `)
+      .gt('inventario.cantidad', 0),
   ])
 
   return (
     <CombosClient
       combos={combos ?? []}
-      albumStock={albumStock ?? []}
-      stickerStock={stickerStock ?? []}
-      accesorioStock={accesorioStock ?? []}
+      variantes={variantes ?? []}
     />
   )
 }

@@ -19,7 +19,9 @@ import StockAdjustModal from '@/components/ui/stock-adjust-modal'
 interface ExistingImage { id: number; url: string; orden: number }
 interface PendingImage  { file: File; preview: string }
 
-export default function StickersStockClient({ stock, stickers }: { stock: any[]; stickers: any[] }) {
+export default function StickersStockClient({ variantes, stickers, stickerProductoMap, productoStickerMap }: {
+  variantes: any[]; stickers: any[]; stickerProductoMap: Record<number, number>; productoStickerMap: Record<number, number>
+}) {
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState<any>(null)
   const [filterRepetida, setFilterRepetida] = useState<string>('all')
@@ -37,6 +39,11 @@ export default function StickersStockClient({ stock, stickers }: { stock: any[];
   const fileInputRef = useRef<HTMLInputElement>(null)
   const supabase = createClient()
   const router = useRouter()
+
+  function getSticker(item: any) {
+    const stickerId = productoStickerMap[item.producto_id]
+    return stickers.find((s: any) => s.id === stickerId)
+  }
 
   const albums = Array.from(
     new Map(stickers.map((s) => [s.album_id, s.albums])).entries()
@@ -66,23 +73,18 @@ export default function StickersStockClient({ stock, stickers }: { stock: any[];
     setOpen(true)
   }
 
-  async function openEdit(item: any) {
+  function openEdit(item: any) {
     setEditing(item)
-    setSelectedAlbum(String(item.stickers?.album_id ?? ''))
+    const sticker = getSticker(item)
+    setSelectedAlbum(String(sticker?.album_id ?? ''))
     resetImages()
     setForm({
-      sticker_id: String(item.sticker_id), cantidad: String(item.cantidad),
+      sticker_id: String(sticker?.id ?? ''), cantidad: String(item.inventario?.cantidad ?? 0),
       precio_compra: String(item.precio_compra), precio_venta: String(item.precio_venta),
       fecha_compra: item.fecha_compra, es_repetida: String(item.es_repetida), notas: item.notas ?? '',
     })
+    setExistingImages(item.producto_variante_imagenes ?? [])
     setOpen(true)
-    const { data: imgs } = await supabase
-      .from('stock_imagenes')
-      .select('id, url, orden')
-      .eq('tabla', 'stock_stickers')
-      .eq('referencia_id', item.id)
-      .order('orden')
-    setExistingImages(imgs ?? [])
   }
 
   function addFiles(files: FileList | null) {
@@ -100,49 +102,56 @@ export default function StickersStockClient({ stock, stickers }: { stock: any[];
     setExistingImages(prev => prev.filter(img => img.id !== id))
   }
 
-  async function saveImages(stockId: number) {
+  async function saveImages(varianteId: number) {
     if (removedIds.length > 0) {
-      await supabase.from('stock_imagenes').delete().in('id', removedIds)
+      await supabase.from('producto_variante_imagenes').delete().in('id', removedIds)
     }
     if (pendingImages.length > 0) {
       const { data: last } = await supabase
-        .from('stock_imagenes').select('orden')
-        .eq('tabla', 'stock_stickers').eq('referencia_id', stockId)
+        .from('producto_variante_imagenes').select('orden')
+        .eq('variante_id', varianteId)
         .order('orden', { ascending: false }).limit(1)
       let nextOrden = last?.[0] ? last[0].orden + 1 : 0
       for (const { file } of pendingImages) {
         const ext = file.name.split('.').pop()
-        const path = `stickers/${stockId}-${Date.now()}.${ext}`
+        const path = `stickers/${varianteId}-${Date.now()}.${ext}`
         const { error } = await supabase.storage.from('sticker-images').upload(path, file, { upsert: true })
         if (!error) {
           const { data } = supabase.storage.from('sticker-images').getPublicUrl(path)
-          await supabase.from('stock_imagenes').insert({ tabla: 'stock_stickers', referencia_id: stockId, url: data.publicUrl, orden: nextOrden++ })
+          await supabase.from('producto_variante_imagenes').insert({ variante_id: varianteId, url: data.publicUrl, orden: nextOrden++ })
         }
       }
     }
     const { data: first } = await supabase
-      .from('stock_imagenes').select('url')
-      .eq('tabla', 'stock_stickers').eq('referencia_id', stockId)
+      .from('producto_variante_imagenes').select('url')
+      .eq('variante_id', varianteId)
       .order('orden').limit(1).maybeSingle()
-    await supabase.from('stock_stickers').update({ imagen_url: first?.url ?? null }).eq('id', stockId)
+    await supabase.from('producto_variantes').update({ imagen_url: first?.url ?? null }).eq('id', varianteId)
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+    const productoId = stickerProductoMap[Number(form.sticker_id)]
+    if (!productoId) { alert('Selecciona una lámina válida.'); return }
+
     setLoading(true)
     const { data: { user } } = await supabase.auth.getUser()
     const payload: any = {
-      sticker_id: Number(form.sticker_id), cantidad: Number(form.cantidad),
+      producto_id: productoId,
       precio_compra: Number(form.precio_compra), precio_venta: Number(form.precio_venta),
       fecha_compra: form.fecha_compra, es_repetida: form.es_repetida === 'true',
       notas: form.notas || null, usuario_id: user!.id,
     }
     if (editing) {
-      await supabase.from('stock_stickers').update(payload).eq('id', editing.id)
+      await supabase.from('producto_variantes').update(payload).eq('id', editing.id)
+      await supabase.from('inventario').update({ cantidad: Number(form.cantidad) }).eq('variante_id', editing.id)
       await saveImages(editing.id)
     } else {
-      const { data: inserted } = await supabase.from('stock_stickers').insert(payload).select('id').single()
-      if (inserted) await saveImages(inserted.id)
+      const { data: inserted } = await supabase.from('producto_variantes').insert(payload).select('id').single()
+      if (inserted) {
+        await supabase.from('inventario').insert({ variante_id: inserted.id, cantidad: Number(form.cantidad) })
+        await saveImages(inserted.id)
+      }
     }
     setLoading(false)
     setOpen(false)
@@ -150,32 +159,33 @@ export default function StickersStockClient({ stock, stickers }: { stock: any[];
   }
 
   async function handleDelete(id: number) {
-    const item = stock.find((s: any) => s.id === id)
-    if (item && item.cantidad > 0) {
-      alert(`No se puede eliminar: tiene ${item.cantidad} unidad(es) en stock. Ajusta el stock a 0 primero.`)
+    const item = variantes.find((s: any) => s.id === id)
+    if (item && (item.inventario?.cantidad ?? 0) > 0) {
+      alert(`No se puede eliminar: tiene ${item.inventario.cantidad} unidad(es) en stock. Ajusta el stock a 0 primero.`)
       return
     }
     const { count: ventasCount } = await supabase
-      .from('sale_items').select('id', { count: 'exact', head: true })
-      .eq('tipo', 'sticker').eq('referencia_id', id)
+      .from('sale_items_v2').select('id', { count: 'exact', head: true })
+      .eq('variante_id', id)
     if (ventasCount && ventasCount > 0) {
       alert('No se puede eliminar: esta entrada tiene historial de ventas registradas.')
       return
     }
     const { count: comboCount } = await supabase
-      .from('combo_items').select('id', { count: 'exact', head: true })
-      .eq('stock_sticker_id', id)
+      .from('combo_componentes').select('id', { count: 'exact', head: true })
+      .eq('variante_id', id)
     if (comboCount && comboCount > 0) {
       alert('No se puede eliminar: esta lámina está incluida en un combo.')
       return
     }
     if (!confirm('¿Eliminar este registro?')) return
-    await supabase.from('stock_imagenes').delete().eq('tabla', 'stock_stickers').eq('referencia_id', id)
-    await supabase.from('stock_stickers').delete().eq('id', id)
+    await supabase.from('producto_variante_imagenes').delete().eq('variante_id', id)
+    await supabase.from('inventario').delete().eq('variante_id', id)
+    await supabase.from('producto_variantes').delete().eq('id', id)
     router.refresh()
   }
 
-  const filtered = stock.filter((s) => {
+  const filtered = variantes.filter((s) => {
     if (filterRepetida === 'repetida') return s.es_repetida
     if (filterRepetida === 'normal') return !s.es_repetida
     return true
@@ -375,50 +385,53 @@ export default function StickersStockClient({ stock, stickers }: { stock: any[];
             <tbody className="divide-y divide-gray-50">
               {filtered.length === 0 ? (
                 <tr><td colSpan={8} className="text-center py-8 text-gray-400">No hay láminas registradas</td></tr>
-              ) : filtered.map((item) => (
-                <tr key={item.id} className="hover:bg-gray-50 transition-colors">
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-3">
-                      {item.imagen_url ? (
-                        <div className="relative h-10 w-10 flex-shrink-0 rounded overflow-hidden bg-gray-100">
-                          <Image src={item.imagen_url} alt={`#${item.stickers?.numero}`} fill className="object-cover" unoptimized />
-                        </div>
-                      ) : (
-                        <div className="h-10 w-10 flex-shrink-0 rounded bg-gray-100 flex items-center justify-center">
-                          <ImageIcon className="h-4 w-4 text-gray-300" />
-                        </div>
-                      )}
-                      <span className="font-medium text-gray-900">#{item.stickers?.numero}</span>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <p className="text-gray-700">{item.stickers?.albums?.nombre}</p>
-                    <p className="text-xs text-gray-400">{item.stickers?.albums?.collection_types?.nombre} — {item.stickers?.albums?.anio}</p>
-                  </td>
-                  <td className="px-4 py-3">
-                    <Badge variant={item.es_repetida ? 'warning' : 'secondary'}>
-                      {item.es_repetida ? 'Repetida' : 'Normal'}
-                    </Badge>
-                  </td>
-                  <td className="px-4 py-3 text-right font-medium">{item.cantidad}</td>
-                  <td className="px-4 py-3 text-right text-gray-600">{formatCurrency(item.precio_compra)}</td>
-                  <td className="px-4 py-3 text-right font-medium text-green-600">{formatCurrency(item.precio_venta)}</td>
-                  <td className="px-4 py-3 text-gray-500">{formatDate(item.fecha_compra)}</td>
-                  <td className="px-4 py-3">
-                    <div className="flex gap-1 justify-end">
-                      <button onClick={() => setAdjustItem(item)} className="p-1.5 text-gray-400 hover:text-green-600 rounded" title="Ajustar stock">
-                        <SlidersHorizontal className="h-4 w-4" />
-                      </button>
-                      <button onClick={() => openEdit(item)} className="p-1.5 text-gray-400 hover:text-blue-600 rounded">
-                        <Pencil className="h-4 w-4" />
-                      </button>
-                      <button onClick={() => handleDelete(item.id)} className="p-1.5 text-gray-400 hover:text-red-600 rounded">
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              ) : filtered.map((item) => {
+                const sticker = getSticker(item)
+                return (
+                  <tr key={item.id} className="hover:bg-gray-50 transition-colors">
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-3">
+                        {item.imagen_url ? (
+                          <div className="relative h-10 w-10 flex-shrink-0 rounded overflow-hidden bg-gray-100">
+                            <Image src={item.imagen_url} alt={`#${item.productos?.numero}`} fill className="object-cover" unoptimized />
+                          </div>
+                        ) : (
+                          <div className="h-10 w-10 flex-shrink-0 rounded bg-gray-100 flex items-center justify-center">
+                            <ImageIcon className="h-4 w-4 text-gray-300" />
+                          </div>
+                        )}
+                        <span className="font-medium text-gray-900">#{item.productos?.numero}</span>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <p className="text-gray-700">{sticker?.albums?.nombre}</p>
+                      <p className="text-xs text-gray-400">{sticker?.albums?.collection_types?.nombre} — {sticker?.albums?.anio}</p>
+                    </td>
+                    <td className="px-4 py-3">
+                      <Badge variant={item.es_repetida ? 'warning' : 'secondary'}>
+                        {item.es_repetida ? 'Repetida' : 'Normal'}
+                      </Badge>
+                    </td>
+                    <td className="px-4 py-3 text-right font-medium">{item.inventario?.cantidad ?? 0}</td>
+                    <td className="px-4 py-3 text-right text-gray-600">{formatCurrency(item.precio_compra)}</td>
+                    <td className="px-4 py-3 text-right font-medium text-green-600">{formatCurrency(item.precio_venta)}</td>
+                    <td className="px-4 py-3 text-gray-500">{formatDate(item.fecha_compra)}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex gap-1 justify-end">
+                        <button onClick={() => setAdjustItem(item)} className="p-1.5 text-gray-400 hover:text-green-600 rounded" title="Ajustar stock">
+                          <SlidersHorizontal className="h-4 w-4" />
+                        </button>
+                        <button onClick={() => openEdit(item)} className="p-1.5 text-gray-400 hover:text-blue-600 rounded">
+                          <Pencil className="h-4 w-4" />
+                        </button>
+                        <button onClick={() => handleDelete(item.id)} className="p-1.5 text-gray-400 hover:text-red-600 rounded">
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>
@@ -428,11 +441,10 @@ export default function StickersStockClient({ stock, stickers }: { stock: any[];
         <StockAdjustModal
           open={!!adjustItem}
           onClose={() => setAdjustItem(null)}
-          tabla="stock_stickers"
+          varianteId={adjustItem.id}
           item={{
-            id: adjustItem.id,
-            cantidad: adjustItem.cantidad,
-            nombre: `#${adjustItem.stickers?.numero} — ${adjustItem.stickers?.albums?.nombre}`,
+            cantidad: adjustItem.inventario?.cantidad ?? 0,
+            nombre: `#${adjustItem.productos?.numero} — ${getSticker(adjustItem)?.albums?.nombre ?? ''}`,
             precio_compra: adjustItem.precio_compra,
             precio_venta: adjustItem.precio_venta,
           }}

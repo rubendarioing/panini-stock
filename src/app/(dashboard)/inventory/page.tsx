@@ -6,26 +6,17 @@ import { formatCurrency } from '@/lib/utils'
 export default async function InventoryPage() {
   const supabase = await createClient()
 
-  const [
-    { data: albumStock, count: albumCount },
-    { data: stickerStock, count: stickerCount },
-  ] = await Promise.all([
-    supabase
-      .from('stock_albums')
-      .select('precio_venta, cantidad, albums(nombre, collection_types(nombre))', { count: 'exact' })
-      .gt('cantidad', 0)
-      .order('fecha_compra', { ascending: false })
-      .limit(5),
-    supabase
-      .from('stock_stickers')
-      .select('precio_venta, cantidad, stickers(numero, albums(nombre))', { count: 'exact' })
-      .gt('cantidad', 0)
-      .order('fecha_compra', { ascending: false })
-      .limit(5),
-  ])
+  const { data: variantes } = await supabase
+    .from('producto_variantes')
+    .select('precio_venta, inventario ( cantidad ), productos ( categorias ( slug ) )')
 
-  const albumValue = albumStock?.reduce((acc, i) => acc + i.precio_venta * i.cantidad, 0) ?? 0
-  const stickerValue = stickerStock?.reduce((acc, i) => acc + i.precio_venta * i.cantidad, 0) ?? 0
+  const albumRows  = (variantes ?? []).filter((v: any) => v.productos?.categorias?.slug === 'album' && (v.inventario?.cantidad ?? 0) > 0)
+  const laminaRows = (variantes ?? []).filter((v: any) => v.productos?.categorias?.slug === 'lamina' && (v.inventario?.cantidad ?? 0) > 0)
+
+  const albumCount = albumRows.length
+  const stickerCount = laminaRows.length
+  const albumValue = albumRows.reduce((acc, i: any) => acc + i.precio_venta * (i.inventario?.cantidad ?? 0), 0)
+  const stickerValue = laminaRows.reduce((acc, i: any) => acc + i.precio_venta * (i.inventario?.cantidad ?? 0), 0)
 
   return (
     <div className="space-y-6">
@@ -42,7 +33,7 @@ export default async function InventoryPage() {
             </div>
             <div>
               <h2 className="text-lg font-semibold text-gray-900">Álbumes y Set a pegar</h2>
-              <p className="text-gray-500 text-sm">{albumCount ?? 0} registros activos</p>
+              <p className="text-gray-500 text-sm">{albumCount} registros activos</p>
               <p className="text-blue-600 font-semibold mt-1">{formatCurrency(albumValue)}</p>
             </div>
           </div>
@@ -55,7 +46,7 @@ export default async function InventoryPage() {
             </div>
             <div>
               <h2 className="text-lg font-semibold text-gray-900">Láminas sueltas</h2>
-              <p className="text-gray-500 text-sm">{stickerCount ?? 0} registros activos</p>
+              <p className="text-gray-500 text-sm">{stickerCount} registros activos</p>
               <p className="text-green-600 font-semibold mt-1">{formatCurrency(stickerValue)}</p>
             </div>
           </div>

@@ -6,25 +6,26 @@ export default async function DashboardPage() {
   const supabase = await createClient()
 
   const [
-    { count: totalAlbums },
-    { count: totalStickers },
+    { data: variantes },
     { data: recentSales },
-    { data: lowStock },
   ] = await Promise.all([
-    supabase.from('stock_albums').select('*', { count: 'exact', head: true }).gt('cantidad', 0),
-    supabase.from('stock_stickers').select('*', { count: 'exact', head: true }).gt('cantidad', 0),
+    supabase
+      .from('producto_variantes')
+      .select('id, inventario ( cantidad ), productos ( nombre, categorias ( slug ), collection_types ( nombre ) )'),
     supabase
       .from('sales')
       .select('id, cliente_nombre, total, fecha, metodo_pago')
       .order('fecha', { ascending: false })
       .limit(5),
-    supabase
-      .from('stock_albums')
-      .select('id, cantidad, albums(nombre, collection_types(nombre))')
-      .lt('cantidad', 3)
-      .gt('cantidad', 0)
-      .limit(5),
   ])
+
+  const albumRows = (variantes ?? []).filter((v: any) => v.productos?.categorias?.slug === 'album' && (v.inventario?.cantidad ?? 0) > 0)
+  const stickerRows = (variantes ?? []).filter((v: any) => v.productos?.categorias?.slug === 'lamina' && (v.inventario?.cantidad ?? 0) > 0)
+  const totalAlbums = albumRows.length
+  const totalStickers = stickerRows.length
+  const lowStock = albumRows
+    .filter((v: any) => (v.inventario?.cantidad ?? 0) < 3)
+    .slice(0, 5)
 
   const { data: salesTotal } = await supabase
     .from('sales')
@@ -34,10 +35,10 @@ export default async function DashboardPage() {
   const monthlySales = salesTotal?.reduce((acc, s) => acc + s.total, 0) ?? 0
 
   const stats = [
-    { label: 'Álbumes en stock', value: totalAlbums ?? 0, icon: BookOpen, color: 'bg-blue-500' },
-    { label: 'Láminas en stock', value: totalStickers ?? 0, icon: Package, color: 'bg-green-500' },
+    { label: 'Álbumes en stock', value: totalAlbums, icon: BookOpen, color: 'bg-blue-500' },
+    { label: 'Láminas en stock', value: totalStickers, icon: Package, color: 'bg-green-500' },
     { label: 'Ventas este mes', value: formatCurrency(monthlySales), icon: ShoppingCart, color: 'bg-purple-500' },
-    { label: 'Registros activos', value: (totalAlbums ?? 0) + (totalStickers ?? 0), icon: TrendingUp, color: 'bg-orange-500' },
+    { label: 'Registros activos', value: totalAlbums + totalStickers, icon: TrendingUp, color: 'bg-orange-500' },
   ]
 
   return (
@@ -93,11 +94,11 @@ export default async function DashboardPage() {
               {lowStock.map((item: any) => (
                 <div key={item.id} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0">
                   <div>
-                    <p className="text-sm font-medium text-gray-900">{item.albums?.nombre}</p>
-                    <p className="text-xs text-gray-400">{item.albums?.collection_types?.nombre}</p>
+                    <p className="text-sm font-medium text-gray-900">{item.productos?.nombre}</p>
+                    <p className="text-xs text-gray-400">{item.productos?.collection_types?.nombre}</p>
                   </div>
                   <span className="inline-flex items-center rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-medium text-red-700">
-                    {item.cantidad} restantes
+                    {item.inventario?.cantidad ?? 0} restantes
                   </span>
                 </div>
               ))}

@@ -23,11 +23,11 @@ const condicionColors: Record<string, string> = {
   nuevo: 'success', sellado: 'default', usado: 'warning',
 }
 
-export default function AlbumsStockClient({ stock, albums }: { stock: any[]; albums: any[] }) {
+export default function AlbumsStockClient({ variantes, productos }: { variantes: any[]; productos: any[] }) {
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState<any>(null)
   const [form, setForm] = useState({
-    album_id: '', cantidad: '1', precio_compra: '', precio_venta: '',
+    producto_id: '', cantidad: '1', precio_compra: '', precio_venta: '',
     fecha_compra: new Date().toISOString().split('T')[0],
     condicion: 'nuevo', estado: 'vacio', notas: '',
   })
@@ -49,28 +49,22 @@ export default function AlbumsStockClient({ stock, albums }: { stock: any[]; alb
 
   function openCreate() {
     setEditing(null)
-    setForm({ album_id: '', cantidad: '1', precio_compra: '', precio_venta: '', fecha_compra: new Date().toISOString().split('T')[0], condicion: 'nuevo', estado: 'vacio', notas: '' })
+    setForm({ producto_id: '', cantidad: '1', precio_compra: '', precio_venta: '', fecha_compra: new Date().toISOString().split('T')[0], condicion: 'nuevo', estado: 'vacio', notas: '' })
     resetImages()
     setOpen(true)
   }
 
-  async function openEdit(item: any) {
+  function openEdit(item: any) {
     setEditing(item)
     setForm({
-      album_id: String(item.album_id), cantidad: String(item.cantidad),
+      producto_id: String(item.producto_id), cantidad: String(item.inventario?.cantidad ?? 0),
       precio_compra: String(item.precio_compra), precio_venta: String(item.precio_venta),
       fecha_compra: item.fecha_compra, condicion: item.condicion,
       estado: item.estado ?? 'vacio', notas: item.notas ?? '',
     })
     resetImages()
+    setExistingImages(item.producto_variante_imagenes ?? [])
     setOpen(true)
-    const { data: imgs } = await supabase
-      .from('stock_imagenes')
-      .select('id, url, orden')
-      .eq('tabla', 'stock_albums')
-      .eq('referencia_id', item.id)
-      .order('orden')
-    setExistingImages(imgs ?? [])
   }
 
   function addFiles(files: FileList | null) {
@@ -88,31 +82,31 @@ export default function AlbumsStockClient({ stock, albums }: { stock: any[]; alb
     setExistingImages(prev => prev.filter(img => img.id !== id))
   }
 
-  async function saveImages(stockId: number) {
+  async function saveImages(varianteId: number) {
     if (removedIds.length > 0) {
-      await supabase.from('stock_imagenes').delete().in('id', removedIds)
+      await supabase.from('producto_variante_imagenes').delete().in('id', removedIds)
     }
     if (pendingImages.length > 0) {
       const { data: last } = await supabase
-        .from('stock_imagenes').select('orden')
-        .eq('tabla', 'stock_albums').eq('referencia_id', stockId)
+        .from('producto_variante_imagenes').select('orden')
+        .eq('variante_id', varianteId)
         .order('orden', { ascending: false }).limit(1)
       let nextOrden = last?.[0] ? last[0].orden + 1 : 0
       for (const { file } of pendingImages) {
         const ext = file.name.split('.').pop()
-        const path = `albums/${stockId}-${Date.now()}.${ext}`
+        const path = `albums/${varianteId}-${Date.now()}.${ext}`
         const { error } = await supabase.storage.from('album-images').upload(path, file, { upsert: true })
         if (!error) {
           const { data } = supabase.storage.from('album-images').getPublicUrl(path)
-          await supabase.from('stock_imagenes').insert({ tabla: 'stock_albums', referencia_id: stockId, url: data.publicUrl, orden: nextOrden++ })
+          await supabase.from('producto_variante_imagenes').insert({ variante_id: varianteId, url: data.publicUrl, orden: nextOrden++ })
         }
       }
     }
     const { data: first } = await supabase
-      .from('stock_imagenes').select('url')
-      .eq('tabla', 'stock_albums').eq('referencia_id', stockId)
+      .from('producto_variante_imagenes').select('url')
+      .eq('variante_id', varianteId)
       .order('orden').limit(1).maybeSingle()
-    await supabase.from('stock_albums').update({ imagen_url: first?.url ?? null }).eq('id', stockId)
+    await supabase.from('producto_variantes').update({ imagen_url: first?.url ?? null }).eq('id', varianteId)
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -121,20 +115,24 @@ export default function AlbumsStockClient({ stock, albums }: { stock: any[]; alb
     const { data: { user } } = await supabase.auth.getUser()
 
     const payload = {
-      album_id: Number(form.album_id), cantidad: Number(form.cantidad),
+      producto_id: Number(form.producto_id),
       precio_compra: Number(form.precio_compra), precio_venta: Number(form.precio_venta),
       fecha_compra: form.fecha_compra, condicion: form.condicion, estado: form.estado,
       notas: form.notas || null, usuario_id: user!.id,
     }
 
     if (editing) {
-      const { error } = await supabase.from('stock_albums').update(payload).eq('id', editing.id)
+      const { error } = await supabase.from('producto_variantes').update(payload).eq('id', editing.id)
       if (error) { alert(`Error al actualizar: ${error.message}`); setLoading(false); return }
+      await supabase.from('inventario').update({ cantidad: Number(form.cantidad) }).eq('variante_id', editing.id)
       await saveImages(editing.id)
     } else {
-      const { data: inserted, error } = await supabase.from('stock_albums').insert(payload).select('id').single()
+      const { data: inserted, error } = await supabase.from('producto_variantes').insert(payload).select('id').single()
       if (error) { alert(`Error al guardar: ${error.message}`); setLoading(false); return }
-      if (inserted) await saveImages(inserted.id)
+      if (inserted) {
+        await supabase.from('inventario').insert({ variante_id: inserted.id, cantidad: Number(form.cantidad) })
+        await saveImages(inserted.id)
+      }
     }
 
     setLoading(false)
@@ -143,41 +141,42 @@ export default function AlbumsStockClient({ stock, albums }: { stock: any[]; alb
   }
 
   async function handleDelete(id: number) {
-    const item = stock.find((s: any) => s.id === id)
-    if (item && item.cantidad > 0) {
-      alert(`No se puede eliminar: tiene ${item.cantidad} unidad(es) en stock. Ajusta el stock a 0 primero.`)
+    const item = variantes.find((s: any) => s.id === id)
+    if (item && (item.inventario?.cantidad ?? 0) > 0) {
+      alert(`No se puede eliminar: tiene ${item.inventario.cantidad} unidad(es) en stock. Ajusta el stock a 0 primero.`)
       return
     }
     const { count: ventasCount } = await supabase
-      .from('sale_items').select('id', { count: 'exact', head: true })
-      .eq('tipo', 'album').eq('referencia_id', id)
+      .from('sale_items_v2').select('id', { count: 'exact', head: true })
+      .eq('variante_id', id)
     if (ventasCount && ventasCount > 0) {
       alert('No se puede eliminar: este álbum tiene historial de ventas registradas.')
       return
     }
     const { count: comboCount } = await supabase
-      .from('combo_items').select('id', { count: 'exact', head: true })
-      .eq('stock_album_id', id)
+      .from('combo_componentes').select('id', { count: 'exact', head: true })
+      .eq('variante_id', id)
     if (comboCount && comboCount > 0) {
       alert('No se puede eliminar: este álbum está incluido en un combo.')
       return
     }
     if (!confirm('¿Eliminar este registro de stock?')) return
-    await supabase.from('stock_imagenes').delete().eq('tabla', 'stock_albums').eq('referencia_id', id)
-    await supabase.from('stock_albums').delete().eq('id', id)
+    await supabase.from('producto_variante_imagenes').delete().eq('variante_id', id)
+    await supabase.from('inventario').delete().eq('variante_id', id)
+    await supabase.from('producto_variantes').delete().eq('id', id)
     router.refresh()
   }
 
-  const filtered = stock.filter((s) => {
+  const filtered = variantes.filter((s) => {
     if (filterEstado === 'lleno') return s.estado === 'lleno'
     if (filterEstado === 'vacio') return s.estado === 'vacio'
     if (filterEstado === 'set_a_pegar') return s.estado === 'set_a_pegar'
     return true
   })
 
-  const totalLlenos    = stock.filter(s => s.estado === 'lleno').reduce((a, s) => a + s.cantidad, 0)
-  const totalVacios    = stock.filter(s => s.estado === 'vacio').reduce((a, s) => a + s.cantidad, 0)
-  const totalSetAPegar = stock.filter(s => s.estado === 'set_a_pegar').reduce((a, s) => a + s.cantidad, 0)
+  const totalLlenos    = variantes.filter(s => s.estado === 'lleno').reduce((a, s) => a + (s.inventario?.cantidad ?? 0), 0)
+  const totalVacios    = variantes.filter(s => s.estado === 'vacio').reduce((a, s) => a + (s.inventario?.cantidad ?? 0), 0)
+  const totalSetAPegar = variantes.filter(s => s.estado === 'set_a_pegar').reduce((a, s) => a + (s.inventario?.cantidad ?? 0), 0)
 
   return (
     <div className="space-y-6">
@@ -219,12 +218,12 @@ export default function AlbumsStockClient({ stock, albums }: { stock: any[]; alb
               <form onSubmit={handleSubmit} className="space-y-4 mt-2">
                 <div className="space-y-1.5">
                   <Label>Álbum</Label>
-                  <Select value={form.album_id} onValueChange={(v) => setForm({ ...form, album_id: v })}>
+                  <Select value={form.producto_id} onValueChange={(v) => setForm({ ...form, producto_id: v })}>
                     <SelectTrigger><SelectValue placeholder="Seleccionar álbum..." /></SelectTrigger>
                     <SelectContent>
-                      {albums.map((a) => (
-                        <SelectItem key={a.id} value={String(a.id)}>
-                          {a.collection_types?.nombre} — {a.nombre} {a.anio}
+                      {productos.map((p) => (
+                        <SelectItem key={p.id} value={String(p.id)}>
+                          {p.collection_types?.nombre} — {p.nombre} {p.anio}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -384,9 +383,9 @@ export default function AlbumsStockClient({ stock, albums }: { stock: any[]; alb
                   <tr key={item.id} className="hover:bg-gray-50 transition-colors">
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">
-                        {item.imagen_url ?? item.albums?.imagen_url ? (
+                        {item.imagen_url ?? item.productos?.imagen_url ? (
                           <div className="relative h-10 w-10 flex-shrink-0 rounded overflow-hidden bg-gray-100">
-                            <Image src={item.imagen_url ?? item.albums.imagen_url} alt={item.albums?.nombre ?? ''} fill className="object-cover" unoptimized />
+                            <Image src={item.imagen_url ?? item.productos.imagen_url} alt={item.productos?.nombre ?? ''} fill className="object-cover" unoptimized />
                           </div>
                         ) : (
                           <div className="h-10 w-10 flex-shrink-0 rounded bg-gray-100 flex items-center justify-center">
@@ -394,8 +393,8 @@ export default function AlbumsStockClient({ stock, albums }: { stock: any[]; alb
                           </div>
                         )}
                         <div>
-                          <p className="font-medium text-gray-900">{item.albums?.nombre}</p>
-                          <p className="text-xs text-gray-400">{item.albums?.collection_types?.nombre} — {item.albums?.anio}</p>
+                          <p className="font-medium text-gray-900">{item.productos?.nombre}</p>
+                          <p className="text-xs text-gray-400">{item.productos?.collection_types?.nombre} — {item.productos?.anio}</p>
                         </div>
                       </div>
                     </td>
@@ -407,7 +406,7 @@ export default function AlbumsStockClient({ stock, albums }: { stock: any[]; alb
                     <td className="px-4 py-3">
                       <Badge variant={condicionColors[item.condicion] as any}>{item.condicion}</Badge>
                     </td>
-                    <td className="px-4 py-3 text-right font-medium">{item.cantidad}</td>
+                    <td className="px-4 py-3 text-right font-medium">{item.inventario?.cantidad ?? 0}</td>
                     <td className="px-4 py-3 text-right text-gray-600">{formatCurrency(item.precio_compra)}</td>
                     <td className="px-4 py-3 text-right font-medium text-green-600">{formatCurrency(item.precio_venta)}</td>
                     <td className={`px-4 py-3 text-right text-xs font-medium ${margen >= 0 ? 'text-green-600' : 'text-red-500'}`}>
@@ -439,11 +438,10 @@ export default function AlbumsStockClient({ stock, albums }: { stock: any[]; alb
         <StockAdjustModal
           open={!!adjustItem}
           onClose={() => setAdjustItem(null)}
-          tabla="stock_albums"
+          varianteId={adjustItem.id}
           item={{
-            id: adjustItem.id,
-            cantidad: adjustItem.cantidad,
-            nombre: `${adjustItem.albums?.collection_types?.nombre} — ${adjustItem.albums?.nombre} ${adjustItem.albums?.anio}`,
+            cantidad: adjustItem.inventario?.cantidad ?? 0,
+            nombre: `${adjustItem.productos?.collection_types?.nombre} — ${adjustItem.productos?.nombre} ${adjustItem.productos?.anio}`,
             precio_compra: adjustItem.precio_compra,
             precio_venta: adjustItem.precio_venta,
           }}

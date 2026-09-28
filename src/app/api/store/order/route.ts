@@ -1,6 +1,14 @@
 import { createClient as createAdminClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
 import { Resend } from 'resend'
+import { labelForVariante } from '@/lib/product-labels'
+
+type OrderItem = {
+  variante_id: number
+  cantidad: number
+  precio_unitario: number
+  subtotal: number
+}
 
 export async function POST(request: Request) {
   const formData = await request.formData()
@@ -12,7 +20,7 @@ export async function POST(request: Request) {
   const direccion    = formData.get('direccion') as string
   const notas        = formData.get('notas') as string
   const total        = Number(formData.get('total'))
-  const items        = JSON.parse(formData.get('items') as string)
+  const items        = JSON.parse(formData.get('items') as string) as OrderItem[]
   const comprobante  = formData.get('comprobante') as File | null
 
   if (!nombre || !telefono || !email || !ciudad || !direccion || !notas || !items?.length) {
@@ -40,55 +48,70 @@ export async function POST(request: Request) {
     )
   }
 
+  // Cargar todas las variantes del carrito en una sola consulta (producto,
+  // categoría, colección e inventario actual). Todo item del carrito —álbum,
+  // sobre, caja, lámina o combo— es una fila de producto_variantes.
+  const varianteIds = [...new Set(items.map((i) => i.variante_id))]
+  const { data: variantes } = await supabase
+    .from('producto_variantes')
+    .select(`
+      id, estado, es_repetida, unidades_contenidas, legacy_table, legacy_id,
+      inventario ( cantidad ),
+      productos ( nombre, anio, descripcion, categorias ( slug ), collection_types ( nombre ) )
+    `)
+    .in('id', varianteIds)
+
+  const varianteMap = new Map((variantes ?? []).map((v: any) => [v.id, v]))
+  const labelFor = labelForVariante
+
+  // Combos: cargar sus componentes (con la variante e inventario de cada uno)
+  // en una sola consulta, agrupados por combo_id (= producto_variantes.legacy_id
+  // cuando legacy_table = 'combos').
+  const comboLegacyIds = [...new Set(
+    (variantes ?? []).filter((v: any) => v.legacy_table === 'combos').map((v: any) => v.legacy_id)
+  )]
+
+  const { data: componentesRaw } = comboLegacyIds.length
+    ? await supabase
+        .from('combo_componentes')
+        .select('combo_id, cantidad, variante_id, producto_variantes ( inventario ( cantidad ), productos ( nombre ) )')
+        .in('combo_id', comboLegacyIds)
+    : { data: [] as any[] }
+
+  const componentesPorCombo = new Map<number, any[]>()
+  for (const c of componentesRaw ?? []) {
+    const list = componentesPorCombo.get(c.combo_id) ?? []
+    list.push(c)
+    componentesPorCombo.set(c.combo_id, list)
+  }
+
   // Validar stock antes de procesar
   for (const item of items) {
-    if (item.tipo === 'album') {
-      const { data: s } = await supabase.from('stock_albums').select('cantidad, albums(nombre)').eq('id', item.referencia_id).single()
-      if (!s || s.cantidad < item.cantidad) {
-        const nombre = (s as any)?.albums?.nombre ?? 'álbum'
-        return NextResponse.json({ error: `Stock insuficiente para "${nombre}". Disponible: ${s?.cantidad ?? 0}.` }, { status: 409 })
-      }
-    } else if (item.tipo === 'sticker') {
-      const { data: s } = await supabase.from('stock_stickers').select('cantidad, stickers(numero)').eq('id', item.referencia_id).single()
-      if (!s || s.cantidad < item.cantidad) {
-        const num = (s as any)?.stickers?.numero ?? item.referencia_id
-        return NextResponse.json({ error: `Stock insuficiente para la lámina #${num}. Disponible: ${s?.cantidad ?? 0}.` }, { status: 409 })
-      }
-    } else if (item.tipo === 'accesorio') {
-      const { data: s } = await supabase.from('stock_accesorios').select('cantidad, tipo, albums(nombre)').eq('id', item.referencia_id).single()
-      if (!s || s.cantidad < item.cantidad) {
-        const label = `${(s as any)?.tipo === 'sobre' ? 'Sobre' : 'Caja Sellada'} — ${(s as any)?.albums?.nombre ?? ''}`
-        return NextResponse.json({ error: `Stock insuficiente para "${label.trim()}". Disponible: ${s?.cantidad ?? 0}.` }, { status: 409 })
-      }
-    } else if (item.tipo === 'combo') {
-      const { data: comboItems } = await supabase
-        .from('combo_items')
-        .select('tipo, cantidad, stock_album_id, stock_sticker_id, stock_accesorio_id')
-        .eq('combo_id', item.referencia_id)
+    const v = varianteMap.get(item.variante_id)
+    if (!v) {
+      return NextResponse.json({ error: 'Uno de los productos del carrito ya no existe.' }, { status: 409 })
+    }
 
-      if (comboItems) {
-        for (const ci of comboItems) {
-          const unidades = ci.cantidad * item.cantidad
-          if (ci.tipo === 'album' && ci.stock_album_id) {
-            const { data: s } = await supabase.from('stock_albums').select('cantidad, albums(nombre)').eq('id', ci.stock_album_id).single()
-            if (!s || s.cantidad < unidades) {
-              const nombre = (s as any)?.albums?.nombre ?? 'álbum del combo'
-              return NextResponse.json({ error: `Stock insuficiente para "${nombre}" (componente del combo). Disponible: ${s?.cantidad ?? 0}.` }, { status: 409 })
-            }
-          } else if (ci.tipo === 'sticker' && ci.stock_sticker_id) {
-            const { data: s } = await supabase.from('stock_stickers').select('cantidad, stickers(numero)').eq('id', ci.stock_sticker_id).single()
-            if (!s || s.cantidad < unidades) {
-              const num = (s as any)?.stickers?.numero ?? ci.stock_sticker_id
-              return NextResponse.json({ error: `Stock insuficiente para la lámina #${num} (componente del combo). Disponible: ${s?.cantidad ?? 0}.` }, { status: 409 })
-            }
-          } else if (ci.tipo === 'accesorio' && ci.stock_accesorio_id) {
-            const { data: s } = await supabase.from('stock_accesorios').select('cantidad, tipo, albums(nombre)').eq('id', ci.stock_accesorio_id).single()
-            if (!s || s.cantidad < unidades) {
-              const label = `${(s as any)?.tipo === 'sobre' ? 'Sobre' : 'Caja Sellada'} — ${(s as any)?.albums?.nombre ?? ''}`
-              return NextResponse.json({ error: `Stock insuficiente para "${label.trim()}" (componente del combo). Disponible: ${s?.cantidad ?? 0}.` }, { status: 409 })
-            }
-          }
+    if (v.legacy_table === 'combos') {
+      const componentes = componentesPorCombo.get(v.legacy_id) ?? []
+      for (const c of componentes) {
+        const unidades = c.cantidad * item.cantidad
+        const disponible = c.producto_variantes?.inventario?.cantidad ?? 0
+        if (disponible < unidades) {
+          const nombreComp = c.producto_variantes?.productos?.nombre ?? 'un componente'
+          return NextResponse.json(
+            { error: `Stock insuficiente para "${nombreComp}" (componente de "${v.productos?.nombre}"). Disponible: ${disponible}.` },
+            { status: 409 }
+          )
         }
+      }
+    } else {
+      const disponible = v.inventario?.cantidad ?? 0
+      if (disponible < item.cantidad) {
+        return NextResponse.json(
+          { error: `Stock insuficiente para "${labelFor(v)}". Disponible: ${disponible}.` },
+          { status: 409 }
+        )
       }
     }
   }
@@ -163,11 +186,10 @@ export async function POST(request: Request) {
   }
 
   // Insertar items
-  const { error: itemsError } = await supabase.from('sale_items').insert(
-    items.map((i: any) => ({
+  const { error: itemsError } = await supabase.from('sale_items_v2').insert(
+    items.map((i) => ({
       sale_id: sale.id,
-      tipo: i.tipo,
-      referencia_id: i.referencia_id,
+      variante_id: i.variante_id,
       cantidad: i.cantidad,
       precio_unitario: i.precio_unitario,
       subtotal: i.subtotal,
@@ -180,52 +202,53 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: `Error al guardar los productos del pedido: ${itemsError.message}` }, { status: 500 })
   }
 
-  // Descontar stock
-  for (const item of items) {
-    if (item.tipo === 'album') {
-      const { data: current } = await supabase.from('stock_albums').select('cantidad').eq('id', item.referencia_id).single()
-      if (current) {
-        await supabase.from('stock_albums').update({ cantidad: Math.max(0, current.cantidad - item.cantidad) }).eq('id', item.referencia_id)
-      }
-    } else if (item.tipo === 'sticker') {
-      const { data: current } = await supabase.from('stock_stickers').select('cantidad').eq('id', item.referencia_id).single()
-      if (current) {
-        await supabase.from('stock_stickers').update({ cantidad: Math.max(0, current.cantidad - item.cantidad) }).eq('id', item.referencia_id)
-      }
-    } else if (item.tipo === 'accesorio') {
-      const { data: current } = await supabase.from('stock_accesorios').select('cantidad').eq('id', item.referencia_id).single()
-      if (current) {
-        await supabase.from('stock_accesorios').update({ cantidad: Math.max(0, current.cantidad - item.cantidad) }).eq('id', item.referencia_id)
-      }
-    } else if (item.tipo === 'combo') {
-      // Descontar el stock de cada componente del combo
-      const { data: comboItems } = await supabase
-        .from('combo_items')
-        .select('tipo, cantidad, stock_album_id, stock_sticker_id, stock_accesorio_id')
-        .eq('combo_id', item.referencia_id)
+  // Descontar stock de forma atómica (descontar_inventario solo resta si hay
+  // suficiente cantidad, evitando sobreventa entre la validación de arriba y
+  // este punto bajo pedidos concurrentes). Si algo falla a mitad de camino,
+  // se repone lo ya descontado y se revierte la venta completa.
+  const decrementados: { variante_id: number; cantidad: number }[] = []
+  let stockError: string | null = null
 
-      if (comboItems) {
-        for (const ci of comboItems) {
-          const unidades = ci.cantidad * item.cantidad
-          if (ci.tipo === 'album' && ci.stock_album_id) {
-            const { data: current } = await supabase.from('stock_albums').select('cantidad').eq('id', ci.stock_album_id).single()
-            if (current) {
-              await supabase.from('stock_albums').update({ cantidad: Math.max(0, current.cantidad - unidades) }).eq('id', ci.stock_album_id)
-            }
-          } else if (ci.tipo === 'sticker' && ci.stock_sticker_id) {
-            const { data: current } = await supabase.from('stock_stickers').select('cantidad').eq('id', ci.stock_sticker_id).single()
-            if (current) {
-              await supabase.from('stock_stickers').update({ cantidad: Math.max(0, current.cantidad - unidades) }).eq('id', ci.stock_sticker_id)
-            }
-          } else if (ci.tipo === 'accesorio' && ci.stock_accesorio_id) {
-            const { data: current } = await supabase.from('stock_accesorios').select('cantidad').eq('id', ci.stock_accesorio_id).single()
-            if (current) {
-              await supabase.from('stock_accesorios').update({ cantidad: Math.max(0, current.cantidad - unidades) }).eq('id', ci.stock_accesorio_id)
-            }
-          }
+  for (const item of items) {
+    const v = varianteMap.get(item.variante_id)
+
+    if (v?.legacy_table === 'combos') {
+      const componentes = componentesPorCombo.get(v.legacy_id) ?? []
+      for (const c of componentes) {
+        const unidades = c.cantidad * item.cantidad
+        const { data: ok } = await supabase.rpc('descontar_inventario', {
+          p_variante_id: c.variante_id,
+          p_cantidad: unidades,
+        })
+        if (ok) {
+          decrementados.push({ variante_id: c.variante_id, cantidad: unidades })
+        } else {
+          stockError = `Se agotó el stock de "${c.producto_variantes?.productos?.nombre ?? 'un componente'}" antes de confirmar tu pedido.`
+          break
         }
       }
+    } else {
+      const { data: ok } = await supabase.rpc('descontar_inventario', {
+        p_variante_id: item.variante_id,
+        p_cantidad: item.cantidad,
+      })
+      if (ok) {
+        decrementados.push({ variante_id: item.variante_id, cantidad: item.cantidad })
+      } else {
+        stockError = `Se agotó el stock de "${labelFor(v)}" antes de confirmar tu pedido.`
+      }
     }
+
+    if (stockError) break
+  }
+
+  if (stockError) {
+    for (const d of decrementados) {
+      await supabase.rpc('reponer_inventario', { p_variante_id: d.variante_id, p_cantidad: d.cantidad })
+    }
+    await supabase.from('sale_items_v2').delete().eq('sale_id', sale.id)
+    await supabase.from('sales').delete().eq('id', sale.id)
+    return NextResponse.json({ error: `${stockError} Por favor intenta de nuevo.` }, { status: 409 })
   }
 
   // Enviar notificación al admin
@@ -234,61 +257,19 @@ export async function POST(request: Request) {
     const formatCurrency = (n: number) =>
       new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(n)
 
-    // Construir etiquetas detalladas por item
-    async function buildItemLabel(i: any): Promise<string> {
-      if (i.tipo === 'album') {
-        const { data: s } = await supabase.from('stock_albums')
-          .select('estado, albums(nombre, anio, collection_types(nombre))')
-          .eq('id', i.referencia_id).single()
-        if (!s) return 'Álbum'
-        const a = (s as any).albums
-        const col = a?.collection_types?.nombre ?? ''
-        const estadoLabel = s.estado === 'lleno' ? 'Lleno' : s.estado === 'set_a_pegar' ? 'Set a Pegar' : 'Vacío'
-        return `Álbum ${a?.nombre ?? ''} ${a?.anio ?? ''}${col ? ` — ${col}` : ''} · ${estadoLabel}`
-      }
-      if (i.tipo === 'sticker') {
-        const { data: s } = await supabase.from('stock_stickers')
-          .select('stickers(numero, descripcion, albums(nombre, anio, collection_types(nombre)))')
-          .eq('id', i.referencia_id).single()
-        if (!s) return 'Lámina'
-        const st = (s as any).stickers
-        const col = st?.albums?.collection_types?.nombre ?? ''
-        const album = `${st?.albums?.nombre ?? ''} ${st?.albums?.anio ?? ''}`.trim()
-        return `Lámina #${st?.numero}${st?.descripcion ? ` "${st.descripcion}"` : ''} · ${album}${col ? ` — ${col}` : ''}`
-      }
-      if (i.tipo === 'accesorio') {
-        const { data: s } = await supabase.from('stock_accesorios')
-          .select('tipo, cantidad_contenido, albums(nombre, anio, collection_types(nombre))')
-          .eq('id', i.referencia_id).single()
-        if (!s) return 'Accesorio'
-        const tipoLabel = (s as any).tipo === 'sobre' ? 'Sobre' : 'Caja Sellada'
-        const contenido = (s as any).cantidad_contenido
-          ? ` (${(s as any).cantidad_contenido} ${(s as any).tipo === 'sobre' ? 'láminas' : 'sobres'})`
-          : ''
-        const a = (s as any).albums
-        const col = a?.collection_types?.nombre ?? ''
-        return `${tipoLabel}${contenido} de ${a?.nombre ?? ''} ${a?.anio ?? ''}${col ? ` — ${col}` : ''}`
-      }
-      if (i.tipo === 'combo') {
-        const { data: c } = await supabase.from('combos').select('nombre').eq('id', i.referencia_id).single()
-        return `Combo: ${(c as any)?.nombre ?? ''}`
-      }
-      return i.tipo
-    }
-
-    const itemLabels = await Promise.all(items.map(buildItemLabel))
-
-    const emoji: Record<string, string> = { album: '📘', sticker: '🃏', combo: '🎁', accesorio: '📦' }
-    const itemsHtml = items.map((i: any, idx: number) =>
-      `<tr>
+    const emoji: Record<string, string> = { album: '📘', lamina: '🃏', combo: '🎁', sobre: '📦', caja: '📦' }
+    const itemsHtml = items.map((i) => {
+      const v = varianteMap.get(i.variante_id)
+      const categoria = v?.productos?.categorias?.slug ?? 'producto'
+      return `<tr>
         <td style="padding:8px;border-bottom:1px solid #f0f0f0">
-          <span style="font-size:16px">${emoji[i.tipo] ?? '📦'}</span>
-          <span style="font-size:13px;color:#1a1a1a;margin-left:6px">${itemLabels[idx]}</span>
+          <span style="font-size:16px">${emoji[categoria] ?? '📦'}</span>
+          <span style="font-size:13px;color:#1a1a1a;margin-left:6px">${labelFor(v)}</span>
         </td>
         <td style="padding:8px;border-bottom:1px solid #f0f0f0;text-align:center;font-size:13px">${i.cantidad}</td>
         <td style="padding:8px;border-bottom:1px solid #f0f0f0;text-align:right;font-size:13px">${formatCurrency(i.subtotal)}</td>
       </tr>`
-    ).join('')
+    }).join('')
 
     await resend.emails.send({
       from: 'Panini Stock <onboarding@resend.dev>',
