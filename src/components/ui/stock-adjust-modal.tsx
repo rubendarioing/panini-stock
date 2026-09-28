@@ -14,9 +14,8 @@ import { formatCurrency } from '@/lib/utils'
 interface Props {
   open: boolean
   onClose: () => void
-  tabla: 'stock_albums' | 'stock_stickers' | 'stock_accesorios'
+  varianteId: number
   item: {
-    id: number
     cantidad: number
     nombre: string
     precio_compra: number
@@ -24,7 +23,7 @@ interface Props {
   }
 }
 
-export default function StockAdjustModal({ open, onClose, tabla, item }: Props) {
+export default function StockAdjustModal({ open, onClose, varianteId, item }: Props) {
   const [tipo, setTipo] = useState<'compra' | 'venta' | 'ajuste'>('compra')
   const [cantidad, setCantidad] = useState('1')
   const [loading, setLoading] = useState(false)
@@ -39,7 +38,7 @@ export default function StockAdjustModal({ open, onClose, tabla, item }: Props) 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setLoading(true)
-    await supabase.from(tabla).update({ cantidad: nuevaCantidad }).eq('id', item.id)
+    await supabase.from('inventario').update({ cantidad: nuevaCantidad }).eq('variante_id', varianteId)
     setLoading(false)
     onClose()
     router.refresh()

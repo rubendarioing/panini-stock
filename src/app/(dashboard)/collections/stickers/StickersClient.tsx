@@ -100,21 +100,27 @@ export default function StickersClient({ albums, stickers }: { albums: any[]; st
   }
 
   async function handleDelete(id: number) {
-    const { data: activeStock } = await supabase
-      .from('stock_stickers').select('id, cantidad').eq('sticker_id', id).gt('cantidad', 0)
-    if (activeStock?.length) {
-      const total = activeStock.reduce((a: number, s: any) => a + s.cantidad, 0)
-      alert(`No se puede eliminar: tiene ${total} unidad(es) en stock. Reduce el stock a 0 primero.`)
+    // Stock y ventas reales viven ahora en producto_variantes/inventario/
+    // sale_items_v2 (stock_stickers/sale_items quedaron como historial legacy).
+    const { data: producto } = await supabase
+      .from('productos')
+      .select('id, producto_variantes(id, inventario(cantidad))')
+      .eq('legacy_table', 'stickers').eq('legacy_id', id)
+      .maybeSingle()
+
+    const varianteIds = (producto?.producto_variantes ?? []).map((v: any) => v.id)
+    const stockActivo = (producto?.producto_variantes ?? [])
+      .reduce((a: number, v: any) => a + (v.inventario?.cantidad ?? 0), 0)
+
+    if (stockActivo > 0) {
+      alert(`No se puede eliminar: tiene ${stockActivo} unidad(es) en stock. Reduce el stock a 0 primero.`)
       return
     }
 
-    const { data: allStock } = await supabase
-      .from('stock_stickers').select('id').eq('sticker_id', id)
-    if (allStock?.length) {
-      const ids = allStock.map((s: any) => s.id)
+    if (varianteIds.length) {
       const { count } = await supabase
-        .from('sale_items').select('id', { count: 'exact', head: true })
-        .eq('tipo', 'sticker').in('referencia_id', ids)
+        .from('sale_items_v2').select('id', { count: 'exact', head: true })
+        .in('variante_id', varianteIds)
       if (count && count > 0) {
         alert('No se puede eliminar: la lámina tiene historial de ventas registradas.')
         return
@@ -122,7 +128,7 @@ export default function StickersClient({ albums, stickers }: { albums: any[]; st
     }
 
     if (!confirm('¿Eliminar esta lámina del catálogo?')) return
-    if (allStock?.length) await supabase.from('stock_stickers').delete().eq('sticker_id', id)
+    await supabase.from('stock_stickers').delete().eq('sticker_id', id)
     await supabase.from('stickers').delete().eq('id', id)
     router.refresh()
   }

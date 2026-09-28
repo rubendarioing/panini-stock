@@ -11,8 +11,8 @@ import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 
 interface CartItem {
-  tipo: 'album' | 'sticker' | 'combo'
-  referencia_id: number
+  variante_id: number
+  categoria_slug: string
   label: string
   sublabel?: string
   imagen_url?: string | null
@@ -21,13 +21,10 @@ interface CartItem {
   stock_disponible: number
 }
 
-export default function StoreClient({ albumStock, stickerStock, combos, collectionTypes, accesorioStock, stockImagenes }: {
-  albumStock: any[]
-  stickerStock: any[]
-  combos: any[]
+export default function StoreClient({ variantes, collectionTypes, varianteImagenes }: {
+  variantes: any[]
   collectionTypes: any[]
-  accesorioStock: any[]
-  stockImagenes: any[]
+  varianteImagenes: any[]
 }) {
   const [cart, setCart] = useState<CartItem[]>([])
   const [cartOpen, setCartOpen] = useState(false)
@@ -46,19 +43,13 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
   })
 
   // Estado local inicializado desde props del servidor
-  const [liveAlbumStock, setLiveAlbumStock]         = useState(albumStock)
-  const [liveStickerStock, setLiveStickerStock]     = useState(stickerStock)
-  const [liveAccesorioStock, setLiveAccesorioStock] = useState(accesorioStock)
-  const [liveCombos, setLiveCombos]                 = useState(combos)
-  const [realtimeToast, setRealtimeToast]           = useState(false)
+  const [liveVariantes, setLiveVariantes] = useState(variantes)
+  const [realtimeToast, setRealtimeToast]   = useState(false)
   const supabase = createClient()
   const router = useRouter()
 
   // Sincronizar props del servidor al estado local (se activa tras router.refresh())
-  useEffect(() => { setLiveAlbumStock(albumStock) }, [albumStock])
-  useEffect(() => { setLiveStickerStock(stickerStock) }, [stickerStock])
-  useEffect(() => { setLiveAccesorioStock(accesorioStock) }, [accesorioStock])
-  useEffect(() => { setLiveCombos(combos) }, [combos])
+  useEffect(() => { setLiveVariantes(variantes) }, [variantes])
 
   useEffect(() => {
     function showToast() {
@@ -66,87 +57,49 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
       setTimeout(() => setRealtimeToast(false), 3000)
     }
 
-    // Si el item ya está en estado → actualización directa (rápido, sin red extra)
-    // Si no está (era cantidad 0 o es nuevo) → router.refresh() recarga los datos
-    // del server component con permisos completos, y los useEffect de sync lo aplican
-    function handleStockUpdate(
-      row: any,
-      setter: React.Dispatch<React.SetStateAction<any[]>>,
-      tipo: string,
-    ) {
-      if (row.cantidad <= 0) {
-        setter(prev => prev.filter((s: any) => s.id !== row.id))
-        return
-      }
-      // Leer estado actual sin mutar para decidir si el item existe
-      let found = false
-      setter(prev => {
-        const idx = prev.findIndex((s: any) => s.id === row.id)
-        if (idx < 0) return prev
-        found = true
-        const updated = [...prev]
-        updated[idx] = { ...updated[idx], cantidad: row.cantidad, precio_venta: row.precio_venta }
-        return updated
-      })
-      if (!found) router.refresh()
-      setCart(prev => prev.map(i =>
-        i.tipo === tipo && i.referencia_id === row.id
-          ? { ...i, stock_disponible: row.cantidad }
-          : i
-      ))
-    }
-
     const channel = supabase
       .channel('store-stock')
-      // Albums
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'stock_albums' }, ({ new: row }) => {
+      // Inventario: única fuente de cambios de cantidad para álbumes/sobres/
+      // cajas/láminas (los combos no tienen fila de inventario propia).
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'inventario' }, ({ new: row }) => {
         if (row.cantidad > 0) router.refresh()
         showToast()
       })
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'stock_albums' }, ({ new: row }) => {
-        handleStockUpdate(row, setLiveAlbumStock, 'album')
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'inventario' }, ({ new: row }) => {
+        let found = false
+        setLiveVariantes(prev => {
+          const idx = prev.findIndex((v: any) => v.id === row.variante_id)
+          if (idx < 0) return prev
+          found = true
+          if (row.cantidad <= 0) return prev.filter((v: any) => v.id !== row.variante_id)
+          const updated = [...prev]
+          updated[idx] = { ...updated[idx], cantidad: row.cantidad }
+          return updated
+        })
+        if (!found && row.cantidad > 0) router.refresh()
+        setCart(prev => prev.map(i =>
+          i.variante_id === row.variante_id ? { ...i, stock_disponible: row.cantidad } : i
+        ))
         showToast()
       })
-      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'stock_albums' }, ({ old: row }) => {
-        setLiveAlbumStock(prev => prev.filter((s: any) => s.id !== row.id)); showToast()
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'inventario' }, ({ old: row }) => {
+        setLiveVariantes(prev => prev.filter((v: any) => v.id !== row.variante_id)); showToast()
       })
-      // Stickers
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'stock_stickers' }, ({ new: row }) => {
-        if (row.cantidad > 0) router.refresh()
-        showToast()
-      })
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'stock_stickers' }, ({ new: row }) => {
-        handleStockUpdate(row, setLiveStickerStock, 'sticker')
-        showToast()
-      })
-      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'stock_stickers' }, ({ old: row }) => {
-        setLiveStickerStock(prev => prev.filter((s: any) => s.id !== row.id)); showToast()
-      })
-      // Accesorios
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'stock_accesorios' }, ({ new: row }) => {
-        if (row.cantidad > 0) router.refresh()
-        showToast()
-      })
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'stock_accesorios' }, ({ new: row }) => {
-        handleStockUpdate(row, setLiveAccesorioStock, 'accesorio')
-        showToast()
-      })
-      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'stock_accesorios' }, ({ old: row }) => {
-        setLiveAccesorioStock(prev => prev.filter((s: any) => s.id !== row.id)); showToast()
-      })
-      // Combos
+      // Combos: precio/activo se editan directo en la tabla `combos`.
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'combos' }, ({ new: row }) => {
-        if (!row.activo) {
-          setLiveCombos(prev => prev.filter((c: any) => c.id !== row.id))
-        } else {
-          setLiveCombos(prev => prev.map((c: any) =>
-            c.id === row.id ? { ...c, precio_total: row.precio_total, nombre: row.nombre, descripcion: row.descripcion } : c
-          ))
-        }
+        setLiveVariantes(prev => {
+          if (!row.activo) return prev.filter((v: any) => !(v.legacy_table === 'combos' && v.legacy_id === row.id))
+          return prev.map((v: any) =>
+            v.legacy_table === 'combos' && v.legacy_id === row.id
+              ? { ...v, precio_venta: row.precio_total, producto_nombre: row.nombre, producto_descripcion: row.descripcion }
+              : v
+          )
+        })
         showToast()
       })
       .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'combos' }, ({ old: row }) => {
-        setLiveCombos(prev => prev.filter((c: any) => c.id !== row.id)); showToast()
+        setLiveVariantes(prev => prev.filter((v: any) => !(v.legacy_table === 'combos' && v.legacy_id === row.id)))
+        showToast()
       })
       .subscribe()
 
@@ -155,108 +108,69 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
   }, [])
 
   const imagenesMap = useMemo(() => {
-    const map: Record<string, string[]> = {}
-    stockImagenes.forEach((img: any) => {
-      const key = `${img.tabla}-${img.referencia_id}`
-      if (!map[key]) map[key] = []
-      map[key].push(img.url)
+    const map: Record<number, string[]> = {}
+    varianteImagenes.forEach((img: any) => {
+      if (!map[img.variante_id]) map[img.variante_id] = []
+      map[img.variante_id].push(img.url)
     })
     return map
-  }, [stockImagenes])
+  }, [varianteImagenes])
 
   const products = useMemo(() => {
-    const list: any[] = []
+    return liveVariantes
+      .filter((v: any) => v.activo && (v.categoria_slug === 'combo' || v.cantidad > 0))
+      .map((v: any) => {
+        const imgs = imagenesMap[v.id] ?? []
+        const mainImg = imgs[0] ?? v.imagen_url ?? v.producto_imagen_url ?? null
+        const stock = v.categoria_slug === 'combo' ? 999 : v.cantidad
 
-    liveAlbumStock.forEach((s: any) => {
-      const badge = s.estado === 'lleno' ? 'Lleno' : s.estado === 'set_a_pegar' ? 'Set a Pegar' : 'Vacío'
-      const badgeVariant = s.estado === 'lleno' ? 'success' : s.estado === 'set_a_pegar' ? 'warning' : 'secondary'
-      const imgs = imagenesMap[`stock_albums-${s.id}`] ?? []
-      const mainImg = imgs[0] ?? s.imagen_url ?? s.albums?.imagen_url ?? null
-      list.push({
-        id: `album-${s.id}`,
-        tipo: 'album',
-        referencia_id: s.id,
-        label: s.albums?.nombre ?? 'Álbum',
-        sublabel: `${s.albums?.collection_types?.nombre ?? ''} ${s.albums?.anio ?? ''}`.trim(),
-        categoria: s.albums?.collection_types?.nombre ?? 'Otros',
-        type_id: s.albums?.type_id,
-        imagen_url: mainImg,
-        imagenes: imgs.length > 0 ? imgs : (mainImg ? [mainImg] : []),
-        notas: s.notas ?? '',
-        precio: s.precio_venta,
-        stock: s.cantidad,
-        badge,
-        badgeVariant,
+        let label = v.producto_nombre ?? 'Producto'
+        let sublabel = [v.coleccion_nombre, v.anio].filter(Boolean).join(' ')
+        let categoria = v.categoria_nombre
+        let badge = ''
+        let badgeVariant: string = 'secondary'
+
+        if (v.categoria_slug === 'album') {
+          badge = v.estado === 'lleno' ? 'Lleno' : v.estado === 'set_a_pegar' ? 'Set a Pegar' : 'Vacío'
+          badgeVariant = v.estado === 'lleno' ? 'success' : v.estado === 'set_a_pegar' ? 'warning' : 'secondary'
+          categoria = v.coleccion_nombre ?? 'Otros'
+        } else if (v.categoria_slug === 'sobre' || v.categoria_slug === 'caja') {
+          const esSobre = v.categoria_slug === 'sobre'
+          badge = v.unidades_contenidas
+            ? `${esSobre ? 'Sobre' : 'Caja'} · ${v.unidades_contenidas} ${esSobre ? 'láminas' : 'sobres'}`
+            : (esSobre ? 'Sobre' : 'Caja Sellada')
+          badgeVariant = esSobre ? 'secondary' : 'warning'
+          categoria = esSobre ? 'Sobres' : 'Cajas Selladas'
+        } else if (v.categoria_slug === 'lamina') {
+          if (v.producto_numero) label = `Lámina #${v.producto_numero}`
+          badge = v.es_repetida ? 'Repetida' : 'Normal'
+          badgeVariant = v.es_repetida ? 'warning' : 'secondary'
+          categoria = 'Láminas'
+        } else if (v.categoria_slug === 'combo') {
+          badge = 'Combo'
+          badgeVariant = 'default'
+          categoria = 'Combos'
+          sublabel = v.producto_descripcion ?? ''
+        }
+
+        return {
+          variante_id: v.id,
+          categoria_slug: v.categoria_slug,
+          label,
+          sublabel,
+          categoria,
+          type_id: v.type_id,
+          imagen_url: mainImg,
+          imagenes: imgs.length > 0 ? imgs : (mainImg ? [mainImg] : []),
+          descripcion: v.categoria_slug === 'lamina' ? (v.producto_descripcion ?? '') : '',
+          notas: v.notas ?? '',
+          precio: v.precio_venta,
+          stock,
+          badge,
+          badgeVariant,
+        }
       })
-    })
-
-    liveAccesorioStock.forEach((s: any) => {
-      const esSobre = s.tipo === 'sobre'
-      const badge = s.cantidad_contenido
-        ? `${esSobre ? 'Sobre' : 'Caja'} · ${s.cantidad_contenido} ${esSobre ? 'láminas' : 'sobres'}`
-        : esSobre ? 'Sobre' : 'Caja Sellada'
-      const imgs = imagenesMap[`stock_accesorios-${s.id}`] ?? []
-      const mainImg = imgs[0] ?? s.imagen_url ?? s.albums?.imagen_url ?? null
-      list.push({
-        id: `accesorio-${s.id}`,
-        tipo: 'accesorio',
-        referencia_id: s.id,
-        label: s.albums?.nombre ?? 'Accesorio',
-        sublabel: `${esSobre ? 'Sobre' : 'Caja Sellada'} — ${s.albums?.collection_types?.nombre ?? ''} ${s.albums?.anio ?? ''}`.trim(),
-        categoria: esSobre ? 'Sobres' : 'Cajas Selladas',
-        type_id: null,
-        imagen_url: mainImg,
-        imagenes: imgs.length > 0 ? imgs : (mainImg ? [mainImg] : []),
-        notas: s.notas ?? '',
-        precio: s.precio_venta,
-        stock: s.cantidad,
-        badge,
-        badgeVariant: esSobre ? 'secondary' : 'warning',
-      })
-    })
-
-    liveStickerStock.forEach((s: any) => {
-      const imgs = imagenesMap[`stock_stickers-${s.id}`] ?? []
-      const mainImg = imgs[0] ?? s.imagen_url ?? null
-      list.push({
-        id: `sticker-${s.id}`,
-        tipo: 'sticker',
-        referencia_id: s.id,
-        label: `Lámina #${s.stickers?.numero}`,
-        sublabel: `${s.stickers?.albums?.nombre ?? ''} — ${s.stickers?.albums?.collection_types?.nombre ?? ''} ${s.stickers?.albums?.anio ?? ''}`.trim(),
-        categoria: 'Láminas',
-        type_id: null,
-        imagen_url: mainImg,
-        imagenes: imgs.length > 0 ? imgs : (mainImg ? [mainImg] : []),
-        descripcion: s.stickers?.descripcion ?? '',
-        notas: s.notas ?? '',
-        precio: s.precio_venta,
-        stock: s.cantidad,
-        badge: s.es_repetida ? 'Repetida' : 'Normal',
-        badgeVariant: s.es_repetida ? 'warning' : 'secondary',
-      })
-    })
-
-    liveCombos.forEach((c: any) => {
-      list.push({
-        id: `combo-${c.id}`,
-        tipo: 'combo',
-        referencia_id: c.id,
-        label: c.nombre,
-        sublabel: c.descripcion,
-        categoria: 'Combos',
-        type_id: null,
-        imagen_url: c.imagen_url ?? null,
-        imagenes: c.imagen_url ? [c.imagen_url] : [],
-        precio: c.precio_total,
-        stock: 999,
-        badge: 'Combo',
-        badgeVariant: 'default',
-      })
-    })
-
-    return list
-  }, [liveAlbumStock, liveStickerStock, liveAccesorioStock, liveCombos, imagenesMap])
+  }, [liveVariantes, imagenesMap])
 
   const categories = [
     { value: 'all', label: 'Todo' },
@@ -266,8 +180,6 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
     { value: 'Láminas', label: 'Láminas' },
     { value: 'Combos', label: 'Combos' },
   ]
-
-
 
   const filtered = products.filter((p) => {
     const q = search.toLowerCase()
@@ -282,7 +194,7 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
 
   function addToCart(product: any) {
     setCart((prev) => {
-      const idx = prev.findIndex((i) => i.tipo === product.tipo && i.referencia_id === product.referencia_id)
+      const idx = prev.findIndex((i) => i.variante_id === product.variante_id)
       if (idx >= 0) {
         const updated = [...prev]
         if (updated[idx].cantidad < product.stock) {
@@ -291,8 +203,8 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
         return updated
       }
       return [...prev, {
-        tipo: product.tipo,
-        referencia_id: product.referencia_id,
+        variante_id: product.variante_id,
+        categoria_slug: product.categoria_slug,
         label: product.label,
         sublabel: product.sublabel,
         imagen_url: product.imagen_url,
@@ -333,8 +245,8 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
     customer.notas.trim() !== '' &&
     comprobante !== null
 
-  function getCartQty(tipo: string, refId: number) {
-    return cart.find((i) => i.tipo === tipo && i.referencia_id === refId)?.cantidad ?? 0
+  function getCartQty(varianteId: number) {
+    return cart.find((i) => i.variante_id === varianteId)?.cantidad ?? 0
   }
 
   async function handleOrder(e: React.FormEvent) {
@@ -352,8 +264,7 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
     fd.append('notas', customer.notas)
     fd.append('total', String(cartTotal))
     fd.append('items', JSON.stringify(cart.map((i) => ({
-      tipo: i.tipo,
-      referencia_id: i.referencia_id,
+      variante_id: i.variante_id,
       cantidad: i.cantidad,
       precio_unitario: i.precio,
       subtotal: i.precio * i.cantidad,
@@ -445,9 +356,9 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
       ) : (
         <div className="grid grid-cols-2 gap-3 sm:gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
           {filtered.map((product) => {
-            const inCart = getCartQty(product.tipo, product.referencia_id)
+            const inCart = getCartQty(product.variante_id)
             return (
-              <div key={product.id} className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden flex flex-col active:scale-[0.98] hover:shadow-md hover:border-blue-200 transition-all">
+              <div key={product.variante_id} className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden flex flex-col active:scale-[0.98] hover:shadow-md hover:border-blue-200 transition-all">
                 <div
                   className={`relative bg-gray-100 aspect-[3/4] ${product.imagenes?.length > 0 ? 'cursor-zoom-in' : ''}`}
                   onClick={product.imagenes?.length > 0 ? () => setGallery({ images: product.imagenes, idx: 0 }) : undefined}
@@ -456,9 +367,9 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
                     <Image src={product.imagen_url} alt={product.label} fill className="object-cover" unoptimized />
                   ) : (
                     <div className="h-full flex flex-col items-center justify-center text-gray-300 gap-2">
-                      {product.tipo === 'album' && <BookOpen className="h-8 w-8 sm:h-10 sm:w-10" />}
-                      {product.tipo === 'sticker' && <Layers className="h-8 w-8 sm:h-10 sm:w-10" />}
-                      {(product.tipo === 'combo' || product.tipo === 'accesorio') && <Package2 className="h-8 w-8 sm:h-10 sm:w-10" />}
+                      {product.categoria_slug === 'album' && <BookOpen className="h-8 w-8 sm:h-10 sm:w-10" />}
+                      {product.categoria_slug === 'lamina' && <Layers className="h-8 w-8 sm:h-10 sm:w-10" />}
+                      {(product.categoria_slug === 'combo' || product.categoria_slug === 'sobre' || product.categoria_slug === 'caja') && <Package2 className="h-8 w-8 sm:h-10 sm:w-10" />}
                     </div>
                   )}
                   <div className="absolute top-1.5 left-1.5 sm:top-2 sm:left-2">
@@ -496,7 +407,7 @@ export default function StoreClient({ albumStock, stickerStock, combos, collecti
                       <div className="mt-2 flex items-center justify-between bg-blue-50 border border-blue-200 rounded-lg px-1 py-1.5 sm:px-2">
                         <button
                           onClick={() => {
-                            const idx = cart.findIndex(i => i.tipo === product.tipo && i.referencia_id === product.referencia_id)
+                            const idx = cart.findIndex(i => i.variante_id === product.variante_id)
                             updateQty(idx, -1)
                           }}
                           className="p-1.5 text-[#003DA5] active:bg-blue-100 hover:bg-blue-100 rounded"

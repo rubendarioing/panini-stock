@@ -12,11 +12,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea'
 import { Plus, Trash2, Eye, ChevronDown } from 'lucide-react'
 import { formatCurrency, formatDate } from '@/lib/utils'
+import { labelForVariante } from '@/lib/product-labels'
 import Image from 'next/image'
 
 interface CartItem {
-  tipo: 'album' | 'sticker' | 'combo'
-  referencia_id: number
+  variante_id: number
+  categoria_slug: string
+  es_combo: boolean
+  combo_legacy_id: number | null
   label: string
   cantidad: number
   precio_unitario: number
@@ -34,13 +37,21 @@ const metodoBadge: Record<string, string> = {
   efectivo: 'success', transferencia: 'default', otro: 'secondary',
 }
 
-export default function SalesClient({ sales, albumStock, stickerStock, combos, accesorioStock }: {
-  sales: any[]; albumStock: any[]; stickerStock: any[]; combos: any[]; accesorioStock: any[]
+const CATEGORIAS = [
+  { value: 'album', label: 'Álbum' },
+  { value: 'lamina', label: 'Lámina' },
+  { value: 'sobre', label: 'Sobre' },
+  { value: 'caja', label: 'Caja' },
+  { value: 'combo', label: 'Combo' },
+]
+
+export default function SalesClient({ sales, variantes }: {
+  sales: any[]; variantes: any[]
 }) {
   const [open, setOpen] = useState(false)
   const [detailSale, setDetailSale] = useState<any>(null)
   const [cart, setCart] = useState<CartItem[]>([])
-  const [itemType, setItemType] = useState('album')
+  const [itemCategoria, setItemCategoria] = useState('album')
   const [itemRef, setItemRef] = useState('')
   const [itemQty, setItemQty] = useState('1')
   const [cliente, setCliente] = useState('')
@@ -53,10 +64,16 @@ export default function SalesClient({ sales, albumStock, stickerStock, combos, a
   const router = useRouter()
 
   function getItemOptions() {
-    if (itemType === 'album') return albumStock.map((s: any) => ({ value: String(s.id), label: `${s.albums?.collection_types?.nombre} ${s.albums?.anio} — ${s.albums?.nombre} (${s.cantidad} disp.)`, precio: s.precio_venta, max: s.cantidad }))
-    if (itemType === 'sticker') return stickerStock.map((s: any) => ({ value: String(s.id), label: `#${s.stickers?.numero} — ${s.stickers?.albums?.nombre} (${s.cantidad} disp.)`, precio: s.precio_venta, max: s.cantidad }))
-    if (itemType === 'accesorio') return accesorioStock.map((s: any) => ({ value: String(s.id), label: `${s.tipo === 'sobre' ? 'Sobre' : 'Caja Sellada'}${s.cantidad_contenido ? ` (${s.cantidad_contenido} ${s.tipo === 'sobre' ? 'láminas' : 'sobres'})` : ''} — ${s.albums?.nombre} ${s.albums?.anio} (${s.cantidad} disp.)`, precio: s.precio_venta, max: s.cantidad }))
-    return combos.map((c: any) => ({ value: String(c.id), label: c.nombre, precio: c.precio_total, max: 999 }))
+    return variantes
+      .filter((v: any) => v.productos?.categorias?.slug === itemCategoria)
+      .filter((v: any) => itemCategoria === 'combo' || (v.inventario?.cantidad ?? 0) > 0)
+      .map((v: any) => ({
+        value: String(v.id),
+        label: itemCategoria === 'combo' ? labelForVariante(v) : `${labelForVariante(v)} (${v.inventario?.cantidad ?? 0} disp.)`,
+        precio: v.precio_venta,
+        es_combo: v.legacy_table === 'combos',
+        combo_legacy_id: v.legacy_table === 'combos' ? v.legacy_id : null,
+      }))
   }
 
   function addToCart() {
@@ -64,13 +81,21 @@ export default function SalesClient({ sales, albumStock, stickerStock, combos, a
     const options = getItemOptions()
     const found = options.find((o) => o.value === itemRef)
     if (!found) return
-    const existing = cart.findIndex((c) => c.tipo === itemType && c.referencia_id === Number(itemRef))
+    const existing = cart.findIndex((c) => c.variante_id === Number(itemRef))
     if (existing >= 0) {
       const updated = [...cart]
       updated[existing].cantidad += Number(itemQty)
       setCart(updated)
     } else {
-      setCart([...cart, { tipo: itemType as any, referencia_id: Number(itemRef), label: found.label, cantidad: Number(itemQty), precio_unitario: found.precio }])
+      setCart([...cart, {
+        variante_id: Number(itemRef),
+        categoria_slug: itemCategoria,
+        es_combo: found.es_combo,
+        combo_legacy_id: found.combo_legacy_id,
+        label: found.label,
+        cantidad: Number(itemQty),
+        precio_unitario: found.precio,
+      }])
     }
     setItemRef('')
     setItemQty('1')
@@ -99,19 +124,52 @@ export default function SalesClient({ sales, albumStock, stickerStock, combos, a
 
     if (error || !sale) { setLoading(false); return }
 
-    await supabase.from('sale_items').insert(cart.map((i) => ({
-      sale_id: sale.id, tipo: i.tipo, referencia_id: i.referencia_id,
+    const { error: itemsError } = await supabase.from('sale_items_v2').insert(cart.map((i) => ({
+      sale_id: sale.id, variante_id: i.variante_id,
       cantidad: i.cantidad, precio_unitario: i.precio_unitario, subtotal: i.precio_unitario * i.cantidad,
     })))
 
+    if (itemsError) {
+      await supabase.from('sales').delete().eq('id', sale.id)
+      setLoading(false)
+      alert('Error al guardar los productos de la venta.')
+      return
+    }
+
+    // Descontar inventario de forma atómica (directo, o por componente si es un combo)
+    const decrementados: { variante_id: number; cantidad: number }[] = []
+    let stockError: string | null = null
+
     for (const item of cart) {
-      if (item.tipo === 'album') {
-        const found = albumStock.find((s: any) => s.id === item.referencia_id)
-        if (found) await supabase.from('stock_albums').update({ cantidad: found.cantidad - item.cantidad }).eq('id', item.referencia_id)
-      } else if (item.tipo === 'sticker') {
-        const found = stickerStock.find((s: any) => s.id === item.referencia_id)
-        if (found) await supabase.from('stock_stickers').update({ cantidad: found.cantidad - item.cantidad }).eq('id', item.referencia_id)
+      if (item.es_combo && item.combo_legacy_id) {
+        const { data: componentes } = await supabase
+          .from('combo_componentes')
+          .select('variante_id, cantidad')
+          .eq('combo_id', item.combo_legacy_id)
+
+        for (const c of componentes ?? []) {
+          const unidades = c.cantidad * item.cantidad
+          const { data: ok } = await supabase.rpc('descontar_inventario', { p_variante_id: c.variante_id, p_cantidad: unidades })
+          if (ok) decrementados.push({ variante_id: c.variante_id, cantidad: unidades })
+          else { stockError = `Sin stock suficiente para un componente de "${item.label}".`; break }
+        }
+      } else {
+        const { data: ok } = await supabase.rpc('descontar_inventario', { p_variante_id: item.variante_id, p_cantidad: item.cantidad })
+        if (ok) decrementados.push({ variante_id: item.variante_id, cantidad: item.cantidad })
+        else stockError = `Sin stock suficiente para "${item.label}".`
       }
+      if (stockError) break
+    }
+
+    if (stockError) {
+      for (const d of decrementados) {
+        await supabase.rpc('reponer_inventario', { p_variante_id: d.variante_id, p_cantidad: d.cantidad })
+      }
+      await supabase.from('sale_items_v2').delete().eq('sale_id', sale.id)
+      await supabase.from('sales').delete().eq('id', sale.id)
+      setLoading(false)
+      alert(stockError)
+      return
     }
 
     setCart([]); setCliente(''); setContacto(''); setNotas('')
@@ -136,39 +194,9 @@ export default function SalesClient({ sales, albumStock, stickerStock, combos, a
   }
 
   function getItemLabel(item: any, mode: 'short' | 'full' = 'short'): string {
-    if (item.tipo === 'album') {
-      const s = albumStock.find((a: any) => a.id === item.referencia_id)
-      if (!s) return 'Álbum'
-      const col = s.albums?.collection_types?.nombre ?? ''
-      const nombre = s.albums?.nombre ?? ''
-      const anio = s.albums?.anio ?? ''
-      if (mode === 'short') return `${nombre} ${anio}`.trim()
-      const estadoLabel = s.estado === 'lleno' ? 'Lleno' : s.estado === 'set_a_pegar' ? 'Set a Pegar' : 'Vacío'
-      return `Álbum ${nombre} ${anio}${col ? ` — ${col}` : ''} · Estado: ${estadoLabel}`
-    }
-    if (item.tipo === 'accesorio') {
-      const s = accesorioStock.find((a: any) => a.id === item.referencia_id)
-      if (!s) return 'Accesorio'
-      const tipoLabel = s.tipo === 'sobre' ? 'Sobre' : 'Caja Sellada'
-      const contenido = s.cantidad_contenido ? ` (${s.cantidad_contenido} ${s.tipo === 'sobre' ? 'láminas' : 'sobres'})` : ''
-      const album = `${s.albums?.nombre ?? ''} ${s.albums?.anio ?? ''}`.trim()
-      if (mode === 'short') return `${tipoLabel}${contenido} — ${album}`
-      return `${tipoLabel}${contenido} de ${album}`
-    }
-    if (item.tipo === 'sticker') {
-      const s = stickerStock.find((a: any) => a.id === item.referencia_id)
-      const st = s?.stickers
-      if (!st) return 'Lámina'
-      const col = st.albums?.collection_types?.nombre ?? ''
-      const album = `${st.albums?.nombre ?? ''} ${st.albums?.anio ?? ''}`.trim()
-      if (mode === 'short') return `Lámina #${st.numero}${st.descripcion ? ` — ${st.descripcion}` : ''}`
-      return `Lámina #${st.numero}${st.descripcion ? ` "${st.descripcion}"` : ''} · ${album}${col ? ` — ${col}` : ''}`
-    }
-    if (item.tipo === 'combo') {
-      const c = combos.find((a: any) => a.id === item.referencia_id)
-      return c?.nombre ?? 'Combo'
-    }
-    return item.tipo
+    const v = item.producto_variantes
+    if (mode === 'full') return labelForVariante(v)
+    return v?.productos?.nombre ?? 'Producto'
   }
 
   const filtered = sales.filter((s) => filterEstado === 'all' || s.estado === filterEstado)
@@ -213,13 +241,12 @@ export default function SalesClient({ sales, albumStock, stickerStock, combos, a
                 <div className="border border-gray-200 rounded-lg p-4 space-y-3">
                   <p className="text-sm font-semibold text-gray-700">Agregar producto</p>
                   <div className="grid grid-cols-3 gap-3">
-                    <Select value={itemType} onValueChange={setItemType}>
+                    <Select value={itemCategoria} onValueChange={(v) => { setItemCategoria(v); setItemRef('') }}>
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="album">Álbum</SelectItem>
-                        <SelectItem value="sticker">Lámina</SelectItem>
-                        <SelectItem value="accesorio">Accesorio</SelectItem>
-                        <SelectItem value="combo">Combo</SelectItem>
+                        {CATEGORIAS.map((c) => (
+                          <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                     <Select value={itemRef} onValueChange={setItemRef}>
@@ -331,13 +358,13 @@ export default function SalesClient({ sales, albumStock, stickerStock, combos, a
                     <td className="px-4 py-3 text-gray-500 text-xs">{sale.clientes?.telefono ?? sale.cliente_contacto ?? '—'}</td>
                     <td className="px-4 py-3 text-gray-500 text-xs">{sale.clientes?.ciudad ?? sale.ciudad ?? '—'}</td>
                     <td className="px-4 py-3 text-xs text-gray-700 max-w-[200px]">
-                      {sale.sale_items?.slice(0, 2).map((item: any, i: number) => (
+                      {sale.sale_items_v2?.slice(0, 2).map((item: any, i: number) => (
                         <div key={i} className="truncate">
                           <span className="font-medium">{item.cantidad}×</span> {getItemLabel(item)}
                         </div>
                       ))}
-                      {sale.sale_items?.length > 2 && (
-                        <div className="text-gray-400">+{sale.sale_items.length - 2} más</div>
+                      {sale.sale_items_v2?.length > 2 && (
+                        <div className="text-gray-400">+{sale.sale_items_v2.length - 2} más</div>
                       )}
                     </td>
                     <td className="px-4 py-3 text-right font-semibold text-green-600">{formatCurrency(sale.total)}</td>
@@ -420,11 +447,13 @@ export default function SalesClient({ sales, albumStock, stickerStock, combos, a
               <div>
                 <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Productos</p>
                 <div className="space-y-1.5">
-                  {detailSale.sale_items?.map((item: any, idx: number) => (
+                  {detailSale.sale_items_v2?.map((item: any, idx: number) => (
                     <div key={idx} className="flex justify-between items-start py-2 border-b border-gray-100 last:border-0 gap-3">
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-gray-900">{getItemLabel(item, 'full')}</p>
-                        <p className="text-xs text-gray-400 capitalize">{item.tipo} · {item.cantidad} und. × {formatCurrency(item.precio_unitario)}</p>
+                        <p className="text-xs text-gray-400 capitalize">
+                          {item.producto_variantes?.productos?.categorias?.nombre ?? ''} · {item.cantidad} und. × {formatCurrency(item.precio_unitario)}
+                        </p>
                       </div>
                       <span className="text-sm font-semibold text-gray-800 whitespace-nowrap">{formatCurrency(item.subtotal)}</span>
                     </div>

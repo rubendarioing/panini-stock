@@ -4,17 +4,25 @@ import AlbumsStockClient from './AlbumsStockClient'
 export default async function AlbumsStockPage() {
   const supabase = await createClient()
 
-  const [{ data: stock }, { data: albums }] = await Promise.all([
+  const [{ data: variantes }, { data: productos }] = await Promise.all([
     supabase
-      .from('stock_albums')
-      .select('*, albums(nombre, edicion, anio, imagen_url, collection_types(nombre))')
+      .from('producto_variantes')
+      .select(`
+        *,
+        inventario ( cantidad ),
+        producto_variante_imagenes ( id, url, orden ),
+        productos ( nombre, anio, imagen_url, categorias ( slug ), collection_types ( nombre ) )
+      `)
       .order('fecha_compra', { ascending: false }),
     supabase
-      .from('albums')
-      .select('*, collection_types(nombre)')
+      .from('productos')
+      .select('*, categorias ( slug ), collection_types ( nombre )')
       .eq('activo', true)
       .order('anio', { ascending: false }),
   ])
 
-  return <AlbumsStockClient stock={stock ?? []} albums={albums ?? []} />
+  const albumVariantes = (variantes ?? []).filter((v: any) => v.productos?.categorias?.slug === 'album')
+  const albumProductos = (productos ?? []).filter((p: any) => p.categorias?.slug === 'album')
+
+  return <AlbumsStockClient variantes={albumVariantes} productos={albumProductos} />
 }

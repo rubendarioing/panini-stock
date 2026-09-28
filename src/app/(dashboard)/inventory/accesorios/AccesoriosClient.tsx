@@ -23,7 +23,7 @@ const condicionColors: Record<string, string> = {
   nuevo: 'success', sellado: 'default', usado: 'warning',
 }
 
-export default function AccesoriosClient({ stock, albums }: { stock: any[]; albums: any[] }) {
+export default function AccesoriosClient({ variantes, albums }: { variantes: any[]; albums: any[] }) {
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState<any>(null)
   const [form, setForm] = useState({
@@ -41,6 +41,33 @@ export default function AccesoriosClient({ stock, albums }: { stock: any[]; albu
   const fileInputRef = useRef<HTMLInputElement>(null)
   const supabase = createClient()
   const router = useRouter()
+
+  // Sobres/cajas no tienen catálogo propio (a diferencia de albums/stickers): el
+  // "producto" (categoría Sobre/Caja de un álbum) se crea la primera vez que se
+  // registra stock para ese álbum+tipo, y se reutiliza después.
+  async function findOrCreateProducto(albumId: number, tipo: string, album: any): Promise<number | null> {
+    const legacyTable = `stock_accesorios_${tipo}`
+    const { data: existing } = await supabase
+      .from('productos').select('id')
+      .eq('legacy_table', legacyTable).eq('legacy_id', albumId)
+      .maybeSingle()
+    if (existing) return existing.id
+
+    const { data: categoria } = await supabase.from('categorias').select('id').eq('slug', tipo).single()
+    if (!categoria) return null
+
+    const { data: created, error } = await supabase.from('productos').insert({
+      categoria_id: categoria.id,
+      type_id: album?.type_id ?? null,
+      anio: album?.anio ?? null,
+      nombre: `${album?.nombre ?? ''} - ${tipo === 'sobre' ? 'Sobre' : 'Caja'}`,
+      activo: true,
+      legacy_table: legacyTable,
+      legacy_id: albumId,
+    }).select('id').single()
+
+    return error ? null : (created?.id ?? null)
+  }
 
   function resetImages() {
     setExistingImages([])
@@ -60,13 +87,13 @@ export default function AccesoriosClient({ stock, albums }: { stock: any[]; albu
     setOpen(true)
   }
 
-  async function openEdit(item: any) {
+  function openEdit(item: any) {
     setEditing(item)
     setForm({
-      album_id: String(item.album_id),
-      tipo: item.tipo,
-      cantidad_contenido: item.cantidad_contenido ? String(item.cantidad_contenido) : '',
-      cantidad: String(item.cantidad),
+      album_id: String(item.productos?.legacy_id ?? ''),
+      tipo: item.productos?.categorias?.slug ?? 'sobre',
+      cantidad_contenido: item.unidades_contenidas ? String(item.unidades_contenidas) : '',
+      cantidad: String(item.inventario?.cantidad ?? 0),
       precio_compra: String(item.precio_compra),
       precio_venta: String(item.precio_venta),
       fecha_compra: item.fecha_compra,
@@ -74,14 +101,8 @@ export default function AccesoriosClient({ stock, albums }: { stock: any[]; albu
       notas: item.notas ?? '',
     })
     resetImages()
+    setExistingImages(item.producto_variante_imagenes ?? [])
     setOpen(true)
-    const { data: imgs } = await supabase
-      .from('stock_imagenes')
-      .select('id, url, orden')
-      .eq('tabla', 'stock_accesorios')
-      .eq('referencia_id', item.id)
-      .order('orden')
-    setExistingImages(imgs ?? [])
   }
 
   function addFiles(files: FileList | null) {
@@ -99,42 +120,45 @@ export default function AccesoriosClient({ stock, albums }: { stock: any[]; albu
     setExistingImages(prev => prev.filter(img => img.id !== id))
   }
 
-  async function saveImages(stockId: number) {
+  async function saveImages(varianteId: number) {
     if (removedIds.length > 0) {
-      await supabase.from('stock_imagenes').delete().in('id', removedIds)
+      await supabase.from('producto_variante_imagenes').delete().in('id', removedIds)
     }
     if (pendingImages.length > 0) {
       const { data: last } = await supabase
-        .from('stock_imagenes').select('orden')
-        .eq('tabla', 'stock_accesorios').eq('referencia_id', stockId)
+        .from('producto_variante_imagenes').select('orden')
+        .eq('variante_id', varianteId)
         .order('orden', { ascending: false }).limit(1)
       let nextOrden = last?.[0] ? last[0].orden + 1 : 0
       for (const { file } of pendingImages) {
         const ext = file.name.split('.').pop()
-        const path = `accesorios/${stockId}-${Date.now()}.${ext}`
+        const path = `accesorios/${varianteId}-${Date.now()}.${ext}`
         const { error } = await supabase.storage.from('album-images').upload(path, file, { upsert: true })
         if (!error) {
           const { data } = supabase.storage.from('album-images').getPublicUrl(path)
-          await supabase.from('stock_imagenes').insert({ tabla: 'stock_accesorios', referencia_id: stockId, url: data.publicUrl, orden: nextOrden++ })
+          await supabase.from('producto_variante_imagenes').insert({ variante_id: varianteId, url: data.publicUrl, orden: nextOrden++ })
         }
       }
     }
     const { data: first } = await supabase
-      .from('stock_imagenes').select('url')
-      .eq('tabla', 'stock_accesorios').eq('referencia_id', stockId)
+      .from('producto_variante_imagenes').select('url')
+      .eq('variante_id', varianteId)
       .order('orden').limit(1).maybeSingle()
-    await supabase.from('stock_accesorios').update({ imagen_url: first?.url ?? null }).eq('id', stockId)
+    await supabase.from('producto_variantes').update({ imagen_url: first?.url ?? null }).eq('id', varianteId)
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setLoading(true)
     const { data: { user } } = await supabase.auth.getUser()
+
+    const album = albums.find((a: any) => String(a.id) === form.album_id)
+    const productoId = await findOrCreateProducto(Number(form.album_id), form.tipo, album)
+    if (!productoId) { alert('Error al preparar el producto.'); setLoading(false); return }
+
     const payload: any = {
-      album_id: Number(form.album_id),
-      tipo: form.tipo,
-      cantidad_contenido: form.cantidad_contenido ? Number(form.cantidad_contenido) : null,
-      cantidad: Number(form.cantidad),
+      producto_id: productoId,
+      unidades_contenidas: form.cantidad_contenido ? Number(form.cantidad_contenido) : null,
       precio_compra: Number(form.precio_compra),
       precio_venta: Number(form.precio_venta),
       fecha_compra: form.fecha_compra,
@@ -143,13 +167,17 @@ export default function AccesoriosClient({ stock, albums }: { stock: any[]; albu
       usuario_id: user!.id,
     }
     if (editing) {
-      const { error } = await supabase.from('stock_accesorios').update(payload).eq('id', editing.id)
+      const { error } = await supabase.from('producto_variantes').update(payload).eq('id', editing.id)
       if (error) { alert(`Error al actualizar: ${error.message}`); setLoading(false); return }
+      await supabase.from('inventario').update({ cantidad: Number(form.cantidad) }).eq('variante_id', editing.id)
       await saveImages(editing.id)
     } else {
-      const { data: inserted, error } = await supabase.from('stock_accesorios').insert(payload).select('id').single()
+      const { data: inserted, error } = await supabase.from('producto_variantes').insert(payload).select('id').single()
       if (error) { alert(`Error al guardar: ${error.message}`); setLoading(false); return }
-      if (inserted) await saveImages(inserted.id)
+      if (inserted) {
+        await supabase.from('inventario').insert({ variante_id: inserted.id, cantidad: Number(form.cantidad) })
+        await saveImages(inserted.id)
+      }
     }
     setLoading(false)
     setOpen(false)
@@ -157,34 +185,35 @@ export default function AccesoriosClient({ stock, albums }: { stock: any[]; albu
   }
 
   async function handleDelete(id: number) {
-    const item = stock.find((s: any) => s.id === id)
-    if (item?.cantidad > 0) {
-      alert(`No se puede eliminar: tiene ${item.cantidad} unidad(es) en stock. Ajusta el stock a 0 primero.`)
+    const item = variantes.find((s: any) => s.id === id)
+    if ((item?.inventario?.cantidad ?? 0) > 0) {
+      alert(`No se puede eliminar: tiene ${item.inventario.cantidad} unidad(es) en stock. Ajusta el stock a 0 primero.`)
       return
     }
     const { count: ventasCount } = await supabase
-      .from('sale_items').select('id', { count: 'exact', head: true })
-      .eq('tipo', 'accesorio').eq('referencia_id', id)
+      .from('sale_items_v2').select('id', { count: 'exact', head: true })
+      .eq('variante_id', id)
     if (ventasCount && ventasCount > 0) {
       alert('No se puede eliminar: tiene historial de ventas registradas.')
       return
     }
     const { count: comboCount } = await supabase
-      .from('combo_items').select('id', { count: 'exact', head: true })
-      .eq('stock_accesorio_id', id)
+      .from('combo_componentes').select('id', { count: 'exact', head: true })
+      .eq('variante_id', id)
     if (comboCount && comboCount > 0) {
       alert('No se puede eliminar: está incluido en un combo.')
       return
     }
     if (!confirm('¿Eliminar este registro de stock?')) return
-    await supabase.from('stock_imagenes').delete().eq('tabla', 'stock_accesorios').eq('referencia_id', id)
-    await supabase.from('stock_accesorios').delete().eq('id', id)
+    await supabase.from('producto_variante_imagenes').delete().eq('variante_id', id)
+    await supabase.from('inventario').delete().eq('variante_id', id)
+    await supabase.from('producto_variantes').delete().eq('id', id)
     router.refresh()
   }
 
-  const filtered = filterTipo === 'all' ? stock : stock.filter(s => s.tipo === filterTipo)
-  const totalSobres = stock.filter(s => s.tipo === 'sobre').reduce((a, s) => a + s.cantidad, 0)
-  const totalCajas  = stock.filter(s => s.tipo === 'caja').reduce((a, s) => a + s.cantidad, 0)
+  const filtered = filterTipo === 'all' ? variantes : variantes.filter(s => s.productos?.categorias?.slug === filterTipo)
+  const totalSobres = variantes.filter(s => s.productos?.categorias?.slug === 'sobre').reduce((a, s) => a + (s.inventario?.cantidad ?? 0), 0)
+  const totalCajas  = variantes.filter(s => s.productos?.categorias?.slug === 'caja').reduce((a, s) => a + (s.inventario?.cantidad ?? 0), 0)
   const totalImages = existingImages.length + pendingImages.length
 
   return (
@@ -403,17 +432,14 @@ export default function AccesoriosClient({ stock, albums }: { stock: any[]; albu
                 <tr><td colSpan={10} className="text-center py-8 text-gray-400">No hay accesorios registrados</td></tr>
               ) : filtered.map((item) => {
                 const margen = item.precio_venta - item.precio_compra
+                const tipo = item.productos?.categorias?.slug
                 return (
                   <tr key={item.id} className="hover:bg-gray-50 transition-colors">
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">
-                        {item.imagen_url ? (
+                        {item.imagen_url ?? item.productos?.imagen_url ? (
                           <div className="relative h-10 w-10 flex-shrink-0 rounded overflow-hidden bg-gray-100">
-                            <Image src={item.imagen_url} alt={item.albums?.nombre} fill className="object-cover" unoptimized />
-                          </div>
-                        ) : item.albums?.imagen_url ? (
-                          <div className="relative h-10 w-10 flex-shrink-0 rounded overflow-hidden bg-gray-100">
-                            <Image src={item.albums.imagen_url} alt={item.albums.nombre} fill className="object-cover" unoptimized />
+                            <Image src={item.imagen_url ?? item.productos.imagen_url} alt={item.productos?.nombre ?? ''} fill className="object-cover" unoptimized />
                           </div>
                         ) : (
                           <div className="h-10 w-10 flex-shrink-0 rounded bg-gray-100 flex items-center justify-center">
@@ -421,25 +447,25 @@ export default function AccesoriosClient({ stock, albums }: { stock: any[]; albu
                           </div>
                         )}
                         <div>
-                          <p className="font-medium text-gray-900">{item.albums?.nombre}</p>
-                          <p className="text-xs text-gray-400">{item.albums?.collection_types?.nombre} — {item.albums?.anio}</p>
+                          <p className="font-medium text-gray-900">{item.productos?.nombre}</p>
+                          <p className="text-xs text-gray-400">{item.productos?.collection_types?.nombre} — {item.productos?.anio}</p>
                         </div>
                       </div>
                     </td>
                     <td className="px-4 py-3">
-                      <Badge variant={item.tipo === 'sobre' ? 'secondary' : 'warning'}>
-                        {item.tipo === 'sobre' ? 'Sobre' : 'Caja Sellada'}
+                      <Badge variant={tipo === 'sobre' ? 'secondary' : 'warning'}>
+                        {tipo === 'sobre' ? 'Sobre' : 'Caja Sellada'}
                       </Badge>
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-500">
-                      {item.cantidad_contenido
-                        ? `${item.cantidad_contenido} ${item.tipo === 'sobre' ? 'láminas' : 'sobres'}`
+                      {item.unidades_contenidas
+                        ? `${item.unidades_contenidas} ${tipo === 'sobre' ? 'láminas' : 'sobres'}`
                         : '—'}
                     </td>
                     <td className="px-4 py-3">
                       <Badge variant={condicionColors[item.condicion] as any}>{item.condicion}</Badge>
                     </td>
-                    <td className="px-4 py-3 text-right font-medium">{item.cantidad}</td>
+                    <td className="px-4 py-3 text-right font-medium">{item.inventario?.cantidad ?? 0}</td>
                     <td className="px-4 py-3 text-right text-gray-600">{formatCurrency(item.precio_compra)}</td>
                     <td className="px-4 py-3 text-right font-medium text-green-600">{formatCurrency(item.precio_venta)}</td>
                     <td className={`px-4 py-3 text-right text-xs font-medium ${margen >= 0 ? 'text-green-600' : 'text-red-500'}`}>
@@ -471,11 +497,10 @@ export default function AccesoriosClient({ stock, albums }: { stock: any[]; albu
         <StockAdjustModal
           open={!!adjustItem}
           onClose={() => setAdjustItem(null)}
-          tabla="stock_accesorios"
+          varianteId={adjustItem.id}
           item={{
-            id: adjustItem.id,
-            cantidad: adjustItem.cantidad,
-            nombre: `${adjustItem.tipo === 'sobre' ? 'Sobre' : 'Caja Sellada'} — ${adjustItem.albums?.nombre} ${adjustItem.albums?.anio}`,
+            cantidad: adjustItem.inventario?.cantidad ?? 0,
+            nombre: `${adjustItem.productos?.categorias?.slug === 'sobre' ? 'Sobre' : 'Caja Sellada'} — ${adjustItem.productos?.nombre} ${adjustItem.productos?.anio}`,
             precio_compra: adjustItem.precio_compra,
             precio_venta: adjustItem.precio_venta,
           }}
