@@ -38,8 +38,13 @@ export default function StockAdjustModal({ open, onClose, varianteId, item }: Pr
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setLoading(true)
-    await supabase.from('inventario').update({ cantidad: nuevaCantidad }).eq('variante_id', varianteId)
+    // upsert (no update): si por algún motivo la fila de inventario no existía
+    // para esta variante, un UPDATE no crea nada y falla en silencio.
+    const { error } = await supabase
+      .from('inventario')
+      .upsert({ variante_id: varianteId, cantidad: nuevaCantidad }, { onConflict: 'variante_id' })
     setLoading(false)
+    if (error) { alert(`Error al ajustar el stock: ${error.message}`); return }
     onClose()
     router.refresh()
   }

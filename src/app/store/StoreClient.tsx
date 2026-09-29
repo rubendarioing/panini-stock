@@ -36,8 +36,6 @@ export default function StoreClient({ variantes, collectionTypes, varianteImagen
   const [loading, setLoading] = useState(false)
   const [orderError, setOrderError] = useState<string | null>(null)
   const [gallery, setGallery] = useState<{images: string[], idx: number} | null>(null)
-  const [comprobante, setComprobante] = useState<File | null>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
   const [customer, setCustomer] = useState({
     nombre: '', email: '', telefono: '', ciudad: '', direccion: '', notas: '',
   })
@@ -242,48 +240,83 @@ export default function StoreClient({ variantes, collectionTypes, varianteImagen
     emailValido &&
     customer.ciudad.trim() !== '' &&
     customer.direccion.trim() !== '' &&
-    customer.notas.trim() !== '' &&
-    comprobante !== null
+    customer.notas.trim() !== ''
 
   function getCartQty(varianteId: number) {
     return cart.find((i) => i.variante_id === varianteId)?.cantidad ?? 0
   }
 
-  async function handleOrder(e: React.FormEvent) {
-    e.preventDefault()
-    if (cart.length === 0) return
-    setLoading(true)
-    setOrderError(null)
+  function loadWompiScript(): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if ((window as any).WidgetCheckout) return resolve()
+    const script = document.createElement('script')
+    script.src = 'https://checkout.wompi.co/widget.js'
+    script.onload = () => resolve()
+    script.onerror = () => reject(new Error('No se pudo cargar Wompi'))
+    document.body.appendChild(script)
+  })
+}
 
-    const fd = new FormData()
-    fd.append('nombre', customer.nombre)
-    fd.append('email', customer.email)
-    fd.append('telefono', customer.telefono)
-    fd.append('ciudad', customer.ciudad)
-    fd.append('direccion', customer.direccion)
-    fd.append('notas', customer.notas)
-    fd.append('total', String(cartTotal))
-    fd.append('items', JSON.stringify(cart.map((i) => ({
-      variante_id: i.variante_id,
-      cantidad: i.cantidad,
-      precio_unitario: i.precio,
-      subtotal: i.precio * i.cantidad,
-    }))))
-    if (comprobante) fd.append('comprobante', comprobante)
+async function handleOrder(e: React.FormEvent) {
+  e.preventDefault()
+  if (cart.length === 0) return
+  setLoading(true)
+  setOrderError(null)
 
-    const res = await fetch('/api/store/order', { method: 'POST', body: fd })
-    const data = await res.json()
+  const res = await fetch('/api/store/order', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      nombre: customer.nombre,
+      email: customer.email,
+      telefono: customer.telefono,
+      ciudad: customer.ciudad,
+      direccion: customer.direccion,
+      notas: customer.notas,
+      total: cartTotal,
+      items: cart.map((i) => ({
+        variante_id: i.variante_id,
+        cantidad: i.cantidad,
+        precio_unitario: i.precio,
+        subtotal: i.precio * i.cantidad,
+      })),
+    }),
+  })
+  const data = await res.json()
+
+  if (!res.ok) {
     setLoading(false)
+    setOrderError(data.error ?? 'Ocurrió un error al registrar el pedido. Intenta de nuevo.')
+    return
+  }
 
-    if (res.ok) {
+  try {
+    await loadWompiScript()
+    // El WAF de Wompi bloquea (403) cualquier redirect-url que contenga
+    // "localhost", sin importar el esquema. En local se omite: el flujo del
+    // Widget ya confirma vía el callback de checkout.open(), no depende de
+    // la redirección.
+    const isLocalhost = window.location.hostname === 'localhost'
+    const checkout = new (window as any).WidgetCheckout({
+      currency: data.wompi.currency,
+      amountInCents: data.wompi.amountInCents,
+      reference: data.wompi.reference,
+      publicKey: data.wompi.publicKey,
+      signature: { integrity: data.wompi.signature },
+      ...(isLocalhost ? {} : { redirectUrl: `${window.location.origin}/store` }),
+    })
+    checkout.open(() => {
       setOrderNumber(data.order_id)
       setCart([])
       setCheckoutOpen(false)
       setOrderDone(true)
-    } else {
-      setOrderError(data.error ?? 'Ocurrió un error al registrar el pedido. Intenta de nuevo.')
-    }
+    })
+  } catch {
+    setOrderError('No se pudo abrir la pasarela de pago. Intenta de nuevo.')
   }
+  setLoading(false)
+}
+
 
   if (orderDone) {
     return (
@@ -299,7 +332,6 @@ export default function StoreClient({ variantes, collectionTypes, varianteImagen
           onClick={() => {
             setOrderDone(false)
             setCustomer({ nombre: '', email: '', telefono: '', ciudad: '', direccion: '', notas: '' })
-            setComprobante(null)
           }}
           className="bg-[#003DA5] hover:bg-[#002d80] text-white font-semibold px-6 py-2.5 rounded-lg transition-colors"
         >
@@ -636,28 +668,6 @@ export default function StoreClient({ variantes, collectionTypes, varianteImagen
               <div className="space-y-1.5">
                 <Label>Notas del pedido</Label>
                 <Input placeholder="Ej: horario de entrega, indicaciones de acceso..." value={customer.notas} onChange={(e) => setCustomer({ ...customer, notas: e.target.value })} />
-              </div>
-
-              <div className="space-y-1.5">
-                <Label>Comprobante de pago</Label>
-                <div
-                  onClick={() => fileInputRef.current?.click()}
-                  className="cursor-pointer border-2 border-dashed border-gray-300 rounded-xl p-4 text-center hover:border-[#003DA5] hover:bg-blue-50 transition-colors"
-                >
-                  {comprobante ? (
-                    <div className="flex items-center justify-center gap-2 text-green-600">
-                      <CheckCircle className="h-5 w-5" />
-                      <span className="text-sm font-medium">{comprobante.name}</span>
-                    </div>
-                  ) : (
-                    <div className="flex flex-col items-center gap-1 text-gray-400">
-                      <Upload className="h-6 w-6" />
-                      <span className="text-sm">Click para adjuntar imagen del pago</span>
-                      <span className="text-xs">PNG, JPG hasta 5MB</span>
-                    </div>
-                  )}
-                </div>
-                <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => setComprobante(e.target.files?.[0] ?? null)} />
               </div>
 
               {orderError && (

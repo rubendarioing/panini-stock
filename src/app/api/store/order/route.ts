@@ -2,6 +2,7 @@ import { createClient as createAdminClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
 import { Resend } from 'resend'
 import { labelForVariante } from '@/lib/product-labels'
+import { getWompiIntegritySignature } from '@/lib/wompi'
 
 type OrderItem = {
   variante_id: number
@@ -11,17 +12,11 @@ type OrderItem = {
 }
 
 export async function POST(request: Request) {
-  const formData = await request.formData()
-
-  const nombre       = formData.get('nombre') as string
-  const email        = formData.get('email') as string
-  const telefono     = formData.get('telefono') as string
-  const ciudad       = formData.get('ciudad') as string
-  const direccion    = formData.get('direccion') as string
-  const notas        = formData.get('notas') as string
-  const total        = Number(formData.get('total'))
-  const items        = JSON.parse(formData.get('items') as string) as OrderItem[]
-  const comprobante  = formData.get('comprobante') as File | null
+  const body = await request.json()
+  const { nombre, email, telefono, ciudad, direccion, notas, total, items } = body as {
+    nombre: string; email: string; telefono: string; ciudad: string; direccion: string; notas: string
+    total: number; items: OrderItem[]
+  }
 
   if (!nombre || !telefono || !email || !ciudad || !direccion || !notas || !items?.length) {
     return NextResponse.json({ error: 'Datos incompletos' }, { status: 400 })
@@ -48,9 +43,7 @@ export async function POST(request: Request) {
     )
   }
 
-  // Cargar todas las variantes del carrito en una sola consulta (producto,
-  // categoría, colección e inventario actual). Todo item del carrito —álbum,
-  // sobre, caja, lámina o combo— es una fila de producto_variantes.
+  // Cargar todas las variantes del carrito en una sola consulta
   const varianteIds = [...new Set(items.map((i) => i.variante_id))]
   const { data: variantes } = await supabase
     .from('producto_variantes')
@@ -62,11 +55,8 @@ export async function POST(request: Request) {
     .in('id', varianteIds)
 
   const varianteMap = new Map((variantes ?? []).map((v: any) => [v.id, v]))
-  const labelFor = labelForVariante
 
-  // Combos: cargar sus componentes (con la variante e inventario de cada uno)
-  // en una sola consulta, agrupados por combo_id (= producto_variantes.legacy_id
-  // cuando legacy_table = 'combos').
+  // Combos: cargar sus componentes agrupados por combo_id
   const comboLegacyIds = [...new Set(
     (variantes ?? []).filter((v: any) => v.legacy_table === 'combos').map((v: any) => v.legacy_id)
   )]
@@ -109,7 +99,7 @@ export async function POST(request: Request) {
       const disponible = v.inventario?.cantidad ?? 0
       if (disponible < item.cantidad) {
         return NextResponse.json(
-          { error: `Stock insuficiente para "${labelFor(v)}". Disponible: ${disponible}.` },
+          { error: `Stock insuficiente para "${labelForVariante(v)}". Disponible: ${disponible}.` },
           { status: 409 }
         )
       }
@@ -137,21 +127,6 @@ export async function POST(request: Request) {
     clienteId = nuevoCliente?.id ?? null
   }
 
-  // Subir comprobante si existe
-  let comprobanteUrl: string | null = null
-  if (comprobante && comprobante.size > 0) {
-    const ext = comprobante.name.split('.').pop()
-    const path = `comprobantes/${Date.now()}.${ext}`
-    const buffer = await comprobante.arrayBuffer()
-    const { error: uploadError } = await supabase.storage
-      .from('comprobantes')
-      .upload(path, buffer, { contentType: comprobante.type, upsert: false })
-    if (!uploadError) {
-      const { data } = supabase.storage.from('comprobantes').getPublicUrl(path)
-      comprobanteUrl = data.publicUrl
-    }
-  }
-
   // Obtener admin para usuario_id
   const { data: adminProfile } = await supabase
     .from('profiles')
@@ -171,9 +146,8 @@ export async function POST(request: Request) {
       ciudad: ciudad || null,
       notas: notas || null,
       total,
-      metodo_pago: 'otro',
+      metodo_pago: 'wompi',
       estado: 'pendiente',
-      comprobante_url: comprobanteUrl,
       cliente_id: clienteId,
       fecha: new Date().toISOString(),
       usuario_id: adminProfile!.id,
@@ -197,15 +171,12 @@ export async function POST(request: Request) {
   )
 
   if (itemsError) {
-    // Revertir la venta si no se pudieron guardar los items
     await supabase.from('sales').delete().eq('id', sale.id)
     return NextResponse.json({ error: `Error al guardar los productos del pedido: ${itemsError.message}` }, { status: 500 })
   }
 
-  // Descontar stock de forma atómica (descontar_inventario solo resta si hay
-  // suficiente cantidad, evitando sobreventa entre la validación de arriba y
-  // este punto bajo pedidos concurrentes). Si algo falla a mitad de camino,
-  // se repone lo ya descontado y se revierte la venta completa.
+  // Reservar stock de forma atómica. Si Wompi rechaza el pago, el webhook
+  // repone estas cantidades (ver api/webhooks/wompi/route.ts).
   const decrementados: { variante_id: number; cantidad: number }[] = []
   let stockError: string | null = null
 
@@ -235,7 +206,7 @@ export async function POST(request: Request) {
       if (ok) {
         decrementados.push({ variante_id: item.variante_id, cantidad: item.cantidad })
       } else {
-        stockError = `Se agotó el stock de "${labelFor(v)}" antes de confirmar tu pedido.`
+        stockError = `Se agotó el stock de "${labelForVariante(v)}" antes de confirmar tu pedido.`
       }
     }
 
@@ -251,7 +222,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: `${stockError} Por favor intenta de nuevo.` }, { status: 409 })
   }
 
-  // Enviar notificación al admin
+  // Enviar notificación al admin (best-effort, no bloquea la respuesta)
   try {
     const resend = new Resend(process.env.RESEND_API_KEY)
     const formatCurrency = (n: number) =>
@@ -264,7 +235,7 @@ export async function POST(request: Request) {
       return `<tr>
         <td style="padding:8px;border-bottom:1px solid #f0f0f0">
           <span style="font-size:16px">${emoji[categoria] ?? '📦'}</span>
-          <span style="font-size:13px;color:#1a1a1a;margin-left:6px">${labelFor(v)}</span>
+          <span style="font-size:13px;color:#1a1a1a;margin-left:6px">${labelForVariante(v)}</span>
         </td>
         <td style="padding:8px;border-bottom:1px solid #f0f0f0;text-align:center;font-size:13px">${i.cantidad}</td>
         <td style="padding:8px;border-bottom:1px solid #f0f0f0;text-align:right;font-size:13px">${formatCurrency(i.subtotal)}</td>
@@ -279,10 +250,9 @@ export async function POST(request: Request) {
         <div style="font-family:sans-serif;max-width:560px;margin:0 auto;color:#1a1a1a">
           <div style="background:#003DA5;padding:24px 32px;border-radius:12px 12px 0 0">
             <h1 style="color:#fff;margin:0;font-size:20px">🛒 Nuevo pedido recibido</h1>
-            <p style="color:#93b4f0;margin:4px 0 0;font-size:14px">Pedido #${sale.id}</p>
+            <p style="color:#93b4f0;margin:4px 0 0;font-size:14px">Pedido #${sale.id} · pago vía Wompi</p>
           </div>
           <div style="background:#fff;padding:24px 32px;border:1px solid #e5e7eb;border-top:none">
-
             <h2 style="font-size:15px;margin:0 0 12px;color:#374151">Datos del cliente</h2>
             <table style="width:100%;font-size:14px;border-collapse:collapse;margin-bottom:20px">
               <tr><td style="padding:4px 0;color:#6b7280;width:120px">Nombre</td><td style="padding:4px 0;font-weight:600">${nombre}</td></tr>
@@ -292,7 +262,6 @@ export async function POST(request: Request) {
               <tr><td style="padding:4px 0;color:#6b7280">Dirección</td><td style="padding:4px 0">${direccion}</td></tr>
               <tr><td style="padding:4px 0;color:#6b7280">Notas</td><td style="padding:4px 0">${notas}</td></tr>
             </table>
-
             <h2 style="font-size:15px;margin:0 0 12px;color:#374151">Productos</h2>
             <table style="width:100%;font-size:14px;border-collapse:collapse;margin-bottom:20px">
               <thead>
@@ -304,15 +273,12 @@ export async function POST(request: Request) {
               </thead>
               <tbody>${itemsHtml}</tbody>
             </table>
-
             <div style="background:#f0f4ff;border-radius:8px;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
               <span style="font-size:15px;font-weight:600;color:#374151">Total del pedido</span>
               <span style="font-size:18px;font-weight:700;color:#003DA5">${formatCurrency(total)}</span>
             </div>
-
-            ${comprobanteUrl ? `<p style="margin:0 0 20px"><a href="${comprobanteUrl}" style="background:#003DA5;color:#fff;padding:10px 20px;border-radius:8px;text-decoration:none;font-size:14px;font-weight:600">Ver comprobante de pago</a></p>` : ''}
-
-            <a href="${process.env.NEXT_PUBLIC_SUPABASE_URL ? `${process.env.NEXT_PUBLIC_APP_URL ?? 'https://panini-stock.vercel.app'}/sales` : '#'}" style="display:inline-block;background:#16a34a;color:#fff;padding:10px 20px;border-radius:8px;text-decoration:none;font-size:14px;font-weight:600">
+            <p style="font-size:13px;color:#6b7280;margin:0 0 20px">El pago se confirma automáticamente cuando Wompi notifique la transacción como aprobada.</p>
+            <a href="${process.env.NEXT_PUBLIC_APP_URL ?? 'https://panini-stock.vercel.app'}/sales" style="display:inline-block;background:#16a34a;color:#fff;padding:10px 20px;border-radius:8px;text-decoration:none;font-size:14px;font-weight:600">
               Ver en el dashboard →
             </a>
           </div>
@@ -322,9 +288,25 @@ export async function POST(request: Request) {
         </div>
       `,
     })
-  } catch (_) {
-    // El email es best-effort, no bloquea la respuesta
+  } catch (err) {
+    // El email es best-effort, no bloquea la respuesta, pero se registra
+    // para poder diagnosticar (antes fallaba en silencio sin dejar rastro).
+    console.error('No se pudo enviar el correo de notificación del pedido:', err)
   }
 
-  return NextResponse.json({ ok: true, order_id: sale.id })
+  const amountInCents = Math.round(total * 100)
+  const reference = String(sale.id)
+  const signature = getWompiIntegritySignature(reference, amountInCents, 'COP')
+
+  return NextResponse.json({
+    ok: true,
+    order_id: sale.id,
+    wompi: {
+      publicKey: process.env.WOMPI_PUBLIC_KEY,
+      reference,
+      amountInCents,
+      currency: 'COP',
+      signature,
+    },
+  })
 }

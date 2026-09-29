@@ -34,7 +34,7 @@ const estadoConfig: Record<string, { label: string; variant: string; next: strin
 }
 
 const metodoBadge: Record<string, string> = {
-  efectivo: 'success', transferencia: 'default', otro: 'secondary',
+  efectivo: 'success', transferencia: 'default', otro: 'secondary', wompi: 'default',
 }
 
 const CATEGORIAS = [

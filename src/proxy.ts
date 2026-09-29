@@ -27,7 +27,10 @@ export async function proxy(request: NextRequest) {
 
   const pathname = request.nextUrl.pathname
   const isAuthPage = pathname.startsWith('/login')
-  const isPublicPage = pathname.startsWith('/store') || pathname.startsWith('/api/store')
+  // /api/webhooks/* nunca lleva sesión de usuario (son llamadas servidor-a-
+  // servidor de terceros, ej. Wompi) — su autenticidad se valida dentro de
+  // cada ruta con la firma del proveedor, no con el login de la app.
+  const isPublicPage = pathname.startsWith('/store') || pathname.startsWith('/api/store') || pathname.startsWith('/api/webhooks')
 
   if (!user && !isAuthPage && !isPublicPage) {
     const url = request.nextUrl.clone()
