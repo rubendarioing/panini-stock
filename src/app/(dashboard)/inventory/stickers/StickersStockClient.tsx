@@ -143,13 +143,19 @@ export default function StickersStockClient({ variantes, stickers, stickerProduc
       notas: form.notas || null, usuario_id: user!.id,
     }
     if (editing) {
-      await supabase.from('producto_variantes').update(payload).eq('id', editing.id)
-      await supabase.from('inventario').update({ cantidad: Number(form.cantidad) }).eq('variante_id', editing.id)
+      const { error } = await supabase.from('producto_variantes').update(payload).eq('id', editing.id)
+      if (error) { alert(`Error al actualizar: ${error.message}`); setLoading(false); return }
+      const { error: invError } = await supabase
+        .from('inventario')
+        .upsert({ variante_id: editing.id, cantidad: Number(form.cantidad) }, { onConflict: 'variante_id' })
+      if (invError) { alert(`Error al actualizar el stock: ${invError.message}`); setLoading(false); return }
       await saveImages(editing.id)
     } else {
-      const { data: inserted } = await supabase.from('producto_variantes').insert(payload).select('id').single()
+      const { data: inserted, error } = await supabase.from('producto_variantes').insert(payload).select('id').single()
+      if (error) { alert(`Error al guardar: ${error.message}`); setLoading(false); return }
       if (inserted) {
-        await supabase.from('inventario').insert({ variante_id: inserted.id, cantidad: Number(form.cantidad) })
+        const { error: invError } = await supabase.from('inventario').insert({ variante_id: inserted.id, cantidad: Number(form.cantidad) })
+        if (invError) { alert(`Error al registrar el stock: ${invError.message}`); setLoading(false); return }
         await saveImages(inserted.id)
       }
     }
