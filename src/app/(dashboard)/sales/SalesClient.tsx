@@ -43,8 +43,8 @@ const CATEGORIAS = [
   { value: 'combo', label: 'Combo' },
 ]
 
-export default function SalesClient({ sales, variantes }: {
-  sales: any[]; variantes: any[]
+export default function SalesClient({ sales, variantes, comboComponentes }: {
+  sales: any[]; variantes: any[]; comboComponentes: any[]
 }) {
   const [open, setOpen] = useState(false)
   const [detailSale, setDetailSale] = useState<any>(null)
@@ -189,6 +189,13 @@ export default function SalesClient({ sales, variantes }: {
       await supabase.rpc('reponer_inventario', { p_variante_id: item.variante_id, p_cantidad: item.cantidad })
     }
     router.refresh()
+  }
+
+  // Ítems actuales de cada combo (combo_componentes), por combo_id.
+  function getComboItems(item: any): any[] {
+    const v = item.producto_variantes
+    if (v?.legacy_table !== 'combos') return []
+    return comboComponentes.filter((c: any) => c.combo_id === v.legacy_id)
   }
 
   function getItemLabel(item: any, mode: 'short' | 'full' = 'short'): string {
@@ -452,6 +459,24 @@ export default function SalesClient({ sales, variantes }: {
                         <p className="text-xs text-gray-400 capitalize">
                           {item.producto_variantes?.productos?.categorias?.nombre ?? ''} · {item.cantidad} und. × {formatCurrency(item.precio_unitario)}
                         </p>
+                        {item.producto_variantes?.legacy_table !== 'combos' && item.producto_variantes?.notas && (
+                          <p className="text-xs text-gray-500 italic">{item.producto_variantes.notas}</p>
+                        )}
+                        {getComboItems(item).length > 0 && (
+                          <div className="mt-1.5 pl-2 border-l-2 border-gray-200 space-y-1">
+                            <p className="text-xs font-medium text-gray-600">
+                              Incluye{item.cantidad > 1 ? ` (total para ${item.cantidad} combos)` : ''}:
+                            </p>
+                            {getComboItems(item).map((c: any, i: number) => (
+                              <div key={i} className="text-xs text-gray-600">
+                                <p>{c.cantidad * item.cantidad}x {labelForVariante(c.producto_variantes)}</p>
+                                {c.producto_variantes?.notas && (
+                                  <p className="text-gray-400 italic">{c.producto_variantes.notas}</p>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                       <span className="text-sm font-semibold text-gray-800 whitespace-nowrap">{formatCurrency(item.subtotal)}</span>
                     </div>
