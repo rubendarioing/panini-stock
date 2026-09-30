@@ -112,74 +112,53 @@ export default function CollectionsClient({ albums, collectionTypes, isAdmin }: 
   }
 
   async function handleDelete(id: number) {
-    // El stock y las ventas reales viven ahora en producto_variantes/inventario/
-    // sale_items_v2 (stock_albums/sale_items quedaron como historial legacy y ya
-    // no reciben movimientos nuevos), así que la validación debe consultar ahí.
-    const { data: productoAlbum } = await supabase
+    // El stock y las ventas viven en producto_variantes/inventario/sale_items_v2.
+    // album_id (029_productos_album_id.sql) agrupa el producto del álbum, sus
+    // láminas y sus sobres/cajas, así que una sola consulta cubre todo.
+    const { data: productos, error: productosError } = await supabase
       .from('productos')
-      .select('id, producto_variantes(id, inventario(cantidad))')
-      .eq('legacy_table', 'albums').eq('legacy_id', id)
-      .maybeSingle()
-
-    const varianteIds = (productoAlbum?.producto_variantes ?? []).map((v: any) => v.id)
-    const stockActivo = (productoAlbum?.producto_variantes ?? [])
-      .reduce((a: number, v: any) => a + (v.inventario?.cantidad ?? 0), 0)
-
-    if (stockActivo > 0) {
-      alert(`No se puede eliminar: el álbum tiene ${stockActivo} unidad(es) en stock. Reduce el stock a 0 primero.`)
+      .select('categorias(slug), producto_variantes(id, inventario(cantidad))')
+      .eq('album_id', id)
+    if (productosError) {
+      alert(`No se pudo validar el stock: ${productosError.message}`)
       return
     }
 
-    if (varianteIds.length) {
-      const { count } = await supabase
-        .from('sale_items_v2').select('id', { count: 'exact', head: true })
-        .in('variante_id', varianteIds)
-      if (count && count > 0) {
-        alert('No se puede eliminar: el álbum tiene historial de ventas registradas.')
-        return
+    const etiquetas: Record<string, string> = { album: 'el álbum', lamina: 'las láminas', sobre: 'los sobres', caja: 'las cajas' }
+    const stockPorCategoria = new Map<string, number>()
+    const varianteIds: number[] = []
+    for (const p of productos ?? []) {
+      const slug = (p as any).categorias?.slug ?? 'album'
+      for (const v of (p as any).producto_variantes ?? []) {
+        varianteIds.push(v.id)
+        stockPorCategoria.set(slug, (stockPorCategoria.get(slug) ?? 0) + (v.inventario?.cantidad ?? 0))
       }
     }
 
-    const { data: stickers } = await supabase
-      .from('stickers').select('id').eq('album_id', id)
+    const conStock = [...stockPorCategoria].filter(([, cantidad]) => cantidad > 0)
+    if (conStock.length) {
+      const detalle = conStock.map(([slug, cantidad]) => `${etiquetas[slug] ?? slug}: ${cantidad}`).join(', ')
+      alert(`No se puede eliminar: hay unidades en stock (${detalle}). Reduce el stock a 0 primero.`)
+      return
+    }
 
-    if (stickers?.length) {
-      const stickerLegacyIds = stickers.map((s: any) => s.id)
-      const { data: productosLaminas } = await supabase
-        .from('productos')
-        .select('producto_variantes(id, inventario(cantidad))')
-        .eq('legacy_table', 'stickers').in('legacy_id', stickerLegacyIds)
-
-      const laminaVarianteIds = (productosLaminas ?? []).flatMap((p: any) => p.producto_variantes ?? []).map((v: any) => v.id)
-      const stockLaminas = (productosLaminas ?? [])
-        .flatMap((p: any) => p.producto_variantes ?? [])
-        .reduce((a: number, v: any) => a + (v.inventario?.cantidad ?? 0), 0)
-
-      if (stockLaminas > 0) {
-        alert(`No se puede eliminar: las láminas del álbum tienen ${stockLaminas} unidad(es) en stock. Reduce el stock a 0 primero.`)
+    const CHUNK = 200
+    for (let i = 0; i < varianteIds.length; i += CHUNK) {
+      const { count } = await supabase
+        .from('sale_items_v2').select('id', { count: 'exact', head: true })
+        .in('variante_id', varianteIds.slice(i, i + CHUNK))
+      if (count && count > 0) {
+        alert('No se puede eliminar: el álbum o sus láminas/sobres/cajas tienen historial de ventas.')
         return
-      }
-
-      if (laminaVarianteIds.length) {
-        const { count } = await supabase
-          .from('sale_items_v2').select('id', { count: 'exact', head: true })
-          .in('variante_id', laminaVarianteIds)
-        if (count && count > 0) {
-          alert('No se puede eliminar: el álbum tiene láminas con historial de ventas.')
-          return
-        }
       }
     }
 
     if (!confirm('¿Eliminar este álbum y todos sus datos asociados?')) return
 
-    if (stickers?.length) {
-      const stickerLegacyIds = stickers.map((s: any) => s.id)
-      await supabase.from('stock_stickers').delete().in('sticker_id', stickerLegacyIds)
-      await supabase.from('stickers').delete().eq('album_id', id)
-    }
-    await supabase.from('stock_albums').delete().eq('album_id', id)
-    await supabase.from('albums').delete().eq('id', id)
+    // stickers se borra en cascada (FK on delete cascade) y los triggers de
+    // 028/029 limpian sus productos.
+    const { error } = await supabase.from('albums').delete().eq('id', id)
+    if (error) alert(`No se pudo eliminar el álbum: ${error.message}`)
     router.refresh()
   }
 

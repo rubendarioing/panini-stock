@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import { useState, useRef, useMemo } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
@@ -15,7 +15,17 @@ import Image from 'next/image'
 import { formatCurrency } from '@/lib/utils'
 import { labelForVariante } from '@/lib/product-labels'
 
-interface ComboItemForm { variante_id: string; cantidad: number; label: string; precio: number }
+interface ComboItemForm { variante_id: string; cantidad: number; label: string; precio: number; stock: number }
+
+function toItemForm(v: any, cantidad: number): ComboItemForm {
+  return {
+    variante_id: String(v.id),
+    cantidad,
+    label: labelForVariante(v),
+    precio: v.precio_venta ?? 0,
+    stock: v.inventario?.cantidad ?? 0,
+  }
+}
 
 const CATEGORIAS = [
   { value: 'album', label: 'Álbum' },
@@ -34,6 +44,7 @@ export default function CombosClient({ combos, variantes }: {
   const [itemCategoria, setItemCategoria] = useState('album')
   const [itemRef, setItemRef] = useState('')
   const [itemQty, setItemQty] = useState('1')
+  const [cantidadCombos, setCantidadCombos] = useState('0')
   const [loading, setLoading] = useState(false)
   const [imageFile, setImageFile] = useState<File | null>(null)
   const [imagePreview, setImagePreview] = useState<string | null>(null)
@@ -59,24 +70,44 @@ export default function CombosClient({ combos, variantes }: {
       .filter((v: any) => v.productos?.categorias?.slug === itemCategoria)
       .map((v: any) => ({
         value: String(v.id),
-        label: labelForVariante(v),
-        precio: v.precio_venta,
+        label: `${labelForVariante(v)} (${v.inventario?.cantidad ?? 0} disp.)`,
+        variante: v,
       }))
   }
 
   function addItem() {
     if (!itemRef) return
     const found = getOptions().find((o) => o.value === itemRef)
+    const qty = Math.max(1, Number(itemQty) || 1)
     if (!found) return
-    setItems([...items, { variante_id: itemRef, cantidad: Number(itemQty), label: found.label, precio: found.precio }])
+    const idx = items.findIndex((i) => i.variante_id === itemRef)
+    if (idx >= 0) {
+      setItems(items.map((i, n) => (n === idx ? { ...i, cantidad: i.cantidad + qty } : i)))
+    } else {
+      setItems([...items, toItemForm(found.variante, qty)])
+    }
     setItemRef('')
     setItemQty('1')
   }
+
+  // Máximo de combos que se pueden armar: stock libre de cada ítem más lo que
+  // este mismo combo ya tiene apartado (se devuelve antes de volver a reservar).
+  const maxCombos = useMemo(() => {
+    if (items.length === 0) return 0
+    const reservadoPorVariante = new Map<string, number>()
+    for (const c of editing?.combo_componentes ?? []) {
+      reservadoPorVariante.set(String(c.variante_id), c.cantidad * (editing?.stock ?? 0))
+    }
+    return Math.min(...items.map((i) =>
+      Math.floor((i.stock + (reservadoPorVariante.get(i.variante_id) ?? 0)) / i.cantidad)
+    ))
+  }, [items, editing])
 
   function openCreate() {
     setEditing(null)
     setForm({ nombre: '', descripcion: '', precio_total: '' })
     setItems([])
+    setCantidadCombos('0')
     setImageFile(null)
     setImagePreview(null)
     setOpen(true)
@@ -85,7 +116,10 @@ export default function CombosClient({ combos, variantes }: {
   function openEdit(combo: any) {
     setEditing(combo)
     setForm({ nombre: combo.nombre, descripcion: combo.descripcion ?? '', precio_total: String(combo.precio_total) })
-    setItems([])
+    setItems((combo.combo_componentes ?? []).map((c: any) =>
+      toItemForm({ ...c.producto_variantes, id: c.variante_id }, c.cantidad)
+    ))
+    setCantidadCombos(String(combo.stock ?? 0))
     setImageFile(null)
     setImagePreview(combo.imagen_url ?? null)
     setOpen(true)
@@ -93,47 +127,65 @@ export default function CombosClient({ combos, variantes }: {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+    const cantidad = Number(cantidadCombos) || 0
+    if (cantidad > maxCombos) {
+      alert(`Con el stock actual solo se pueden armar ${maxCombos} combo(s).`)
+      return
+    }
     setLoading(true)
-    const { data: { user } } = await supabase.auth.getUser()
 
-    if (editing) {
-      await supabase.from('combos').update({
-        nombre: form.nombre, descripcion: form.descripcion || null,
-        precio_total: Number(form.precio_total),
-      }).eq('id', editing.id)
-      if (imageFile) {
-        const url = await uploadImage(editing.id)
-        if (url) await supabase.from('combos').update({ imagen_url: url }).eq('id', editing.id)
-      }
-    } else {
-      const { data: combo } = await supabase.from('combos').insert({
-        nombre: form.nombre, descripcion: form.descripcion || null,
-        precio_total: Number(form.precio_total), activo: true, creado_por: user!.id,
-      }).select().single()
-
-      if (combo) {
-        if (imageFile) {
-          const url = await uploadImage(combo.id)
-          if (url) await supabase.from('combos').update({ imagen_url: url }).eq('id', combo.id)
-        }
-        if (items.length > 0) {
-          const comboComponentes = items.map((i) => ({
-            combo_id: combo.id,
-            variante_id: Number(i.variante_id),
-            cantidad: i.cantidad,
-          }))
-          await supabase.from('combo_componentes').insert(comboComponentes)
-        }
-      }
+    const datos = {
+      nombre: form.nombre,
+      descripcion: form.descripcion || null,
+      precio_total: Number(form.precio_total),
     }
 
+    let comboId: number
+    if (editing) {
+      const { error } = await supabase.from('combos').update(datos).eq('id', editing.id)
+      if (error) { alert(`Error al actualizar el combo: ${error.message}`); setLoading(false); return }
+      comboId = editing.id
+    } else {
+      const { data: { user } } = await supabase.auth.getUser()
+      const { data: combo, error } = await supabase.from('combos')
+        .insert({ ...datos, activo: true, creado_por: user!.id })
+        .select().single()
+      if (error || !combo) { alert(`Error al crear el combo: ${error?.message ?? ''}`); setLoading(false); return }
+      comboId = combo.id
+      // Si lo que sigue falla, reintentar debe actualizar este combo, no crear otro.
+      setEditing({ ...combo, combo_componentes: [], stock: 0 })
+    }
+
+    if (imageFile) {
+      const url = await uploadImage(comboId)
+      if (url) await supabase.from('combos').update({ imagen_url: url }).eq('id', comboId)
+    }
+
+    // Componentes + cantidad en una sola transacción: devuelve lo apartado antes
+    // y aparta los ítems para la nueva cantidad (031_combos_stock_reservado.sql).
+    const { error: rpcError } = await supabase.rpc('guardar_combo', {
+      p_combo_id: comboId,
+      p_componentes: items.map((i) => ({ variante_id: Number(i.variante_id), cantidad: i.cantidad })),
+      p_cantidad: cantidad,
+    })
     setLoading(false)
+    if (rpcError) {
+      alert(`El combo se guardó, pero no se pudieron guardar sus ítems/cantidad: ${rpcError.message}`)
+      router.refresh()
+      return
+    }
+
     setOpen(false)
     router.refresh()
   }
 
   async function toggleActive(combo: any) {
-    await supabase.from('combos').update({ activo: !combo.activo }).eq('id', combo.id)
+    if (combo.activo && combo.stock > 0 &&
+        !confirm(`Al desactivar "${combo.nombre}" sus ${combo.stock} combo(s) armados se desarman y los ítems vuelven al inventario. ¿Continuar?`)) {
+      return
+    }
+    const { error } = await supabase.from('combos').update({ activo: !combo.activo }).eq('id', combo.id)
+    if (error) alert(`No se pudo actualizar el combo: ${error.message}`)
     router.refresh()
   }
 
@@ -164,49 +216,50 @@ export default function CombosClient({ combos, variantes }: {
                 <Textarea value={form.descripcion} onChange={(e) => setForm({ ...form, descripcion: e.target.value })} rows={2} />
               </div>
 
-              {!editing && (
-                <div className="border border-gray-200 rounded-lg p-3 space-y-3">
-                  <p className="text-sm font-medium text-gray-700">Agregar ítems al combo</p>
-                  <div className="grid grid-cols-3 gap-2">
-                    <Select value={itemCategoria} onValueChange={(v) => { setItemCategoria(v); setItemRef('') }}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        {CATEGORIAS.map((c) => (
-                          <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <Select value={itemRef} onValueChange={setItemRef}>
-                      <SelectTrigger><SelectValue placeholder="Seleccionar..." /></SelectTrigger>
-                      <SelectContent>
-                        {getOptions().map((o) => (
-                          <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <div className="flex gap-2">
-                      <Input type="number" min="1" value={itemQty} onChange={(e) => setItemQty(e.target.value)} className="w-16" />
-                      <Button type="button" onClick={addItem} size="sm" variant="outline">+</Button>
-                    </div>
-                  </div>
-                  {items.length > 0 && (
-                    <div className="space-y-1.5 mt-2">
-                      {items.map((item, idx) => (
-                        <div key={idx} className="flex items-center justify-between text-sm bg-gray-50 rounded px-3 py-1.5">
-                          <span className="text-gray-700">{item.cantidad}x {item.label}</span>
-                          <div className="flex items-center gap-2">
-                            <span className="text-gray-500">{formatCurrency(item.precio * item.cantidad)}</span>
-                            <button type="button" onClick={() => setItems(items.filter((_, i) => i !== idx))} className="text-gray-400 hover:text-red-500">
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
-                          </div>
-                        </div>
+              <div className="border border-gray-200 rounded-lg p-3 space-y-3">
+                <p className="text-sm font-medium text-gray-700">Agregar ítems al combo</p>
+                <div className="grid grid-cols-3 gap-2">
+                  <Select value={itemCategoria} onValueChange={(v) => { setItemCategoria(v); setItemRef('') }}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {CATEGORIAS.map((c) => (
+                        <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
                       ))}
-                      <p className="text-xs text-gray-400 text-right">Precio sugerido: {formatCurrency(suggestedPrice)}</p>
-                    </div>
-                  )}
+                    </SelectContent>
+                  </Select>
+                  <Select value={itemRef} onValueChange={setItemRef}>
+                    <SelectTrigger><SelectValue placeholder="Seleccionar..." /></SelectTrigger>
+                    <SelectContent>
+                      {getOptions().map((o) => (
+                        <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <div className="flex gap-2">
+                    <Input type="number" min="1" value={itemQty} onChange={(e) => setItemQty(e.target.value)} className="w-16" />
+                    <Button type="button" onClick={addItem} size="sm" variant="outline">+</Button>
+                  </div>
                 </div>
-              )}
+                {items.length > 0 && (
+                  <div className="space-y-1.5 mt-2">
+                    {items.map((item, idx) => (
+                      <div key={idx} className="flex items-center justify-between text-sm bg-gray-50 rounded px-3 py-1.5">
+                        <span className={item.stock > 0 ? 'text-gray-700' : 'text-orange-600'}>
+                          {item.cantidad}x {item.label}
+                          <span className="text-xs text-gray-400"> · {item.stock} disp.</span>
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-gray-500">{formatCurrency(item.precio * item.cantidad)}</span>
+                          <button type="button" onClick={() => setItems(items.filter((_, i) => i !== idx))} className="text-gray-400 hover:text-red-500">
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                    <p className="text-xs text-gray-400 text-right">Precio sugerido: {formatCurrency(suggestedPrice)}</p>
+                  </div>
+                )}
+              </div>
 
               <div className="space-y-1.5">
                 <Label>Imagen del combo (opcional)</Label>
@@ -239,11 +292,28 @@ export default function CombosClient({ combos, variantes }: {
               </div>
 
               <div className="space-y-1.5">
+                <Label>Cantidad de combos armados</Label>
+                <Input
+                  type="number" min="0" max={maxCombos}
+                  value={cantidadCombos}
+                  onChange={(e) => setCantidadCombos(e.target.value)}
+                  disabled={editing && !editing.activo}
+                />
+                {editing && !editing.activo ? (
+                  <p className="text-xs text-gray-400">Activa el combo para asignarle cantidad.</p>
+                ) : (
+                  <p className={`text-xs ${Number(cantidadCombos) > maxCombos ? 'text-red-500' : 'text-gray-400'}`}>
+                    Máximo con el stock actual: {maxCombos}. Los ítems se apartan del inventario y dejan de venderse sueltos.
+                  </p>
+                )}
+              </div>
+
+              <div className="space-y-1.5">
                 <Label>Precio del combo ($)</Label>
                 <Input type="number" min="0" value={form.precio_total} onChange={(e) => setForm({ ...form, precio_total: e.target.value })} placeholder={String(suggestedPrice || '')} required />
               </div>
               <div className="flex gap-3 pt-2">
-                <Button type="submit" disabled={loading || uploading} className="flex-1">{uploading ? 'Subiendo imagen...' : loading ? 'Guardando...' : editing ? 'Actualizar' : 'Crear combo'}</Button>
+                <Button type="submit" disabled={loading || uploading || Number(cantidadCombos) > maxCombos} className="flex-1">{uploading ? 'Subiendo imagen...' : loading ? 'Guardando...' : editing ? 'Actualizar' : 'Crear combo'}</Button>
                 <Button type="button" variant="outline" onClick={() => setOpen(false)}>Cancelar</Button>
               </div>
             </form>
@@ -273,7 +343,13 @@ export default function CombosClient({ combos, variantes }: {
               </div>
             </div>
             <p className="text-2xl font-bold text-green-600 mb-3">{formatCurrency(combo.precio_total)}</p>
-            <p className="text-xs text-gray-400 mb-4">{combo.combo_componentes?.length ?? 0} ítems en el combo</p>
+            <p className="text-sm font-medium text-gray-700 mb-1">{combo.stock} combo(s) disponibles</p>
+            <ul className="text-xs text-gray-400 mb-4 space-y-0.5">
+              {(combo.combo_componentes ?? []).map((c: any) => (
+                <li key={c.variante_id}>{c.cantidad}x {labelForVariante(c.producto_variantes)}</li>
+              ))}
+              {!combo.combo_componentes?.length && <li>Sin ítems</li>}
+            </ul>
             <div className="flex gap-2">
               <Button size="sm" variant="outline" onClick={() => openEdit(combo)} className="flex-1">
                 <Pencil className="h-3.5 w-3.5 mr-1" /> Editar

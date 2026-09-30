@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { ArrowLeft, Trash2, Layers, Plus, ListPlus, ImageIcon } from 'lucide-react'
 import Image from 'next/image'
 import Link from 'next/link'
@@ -24,6 +25,12 @@ export default function StickersClient({ albums, stickers }: { albums: any[]; st
   // Individual
   const [singleNumero, setSingleNumero] = useState('')
   const [singleDesc, setSingleDesc] = useState('')
+
+  // Edición
+  const [editing, setEditing] = useState<any | null>(null)
+  const [editNumero, setEditNumero] = useState('')
+  const [editDesc, setEditDesc] = useState('')
+  const [loadingEdit, setLoadingEdit] = useState(false)
 
   const supabase = createClient()
   const router = useRouter()
@@ -99,9 +106,40 @@ export default function StickersClient({ albums, stickers }: { albums: any[]; st
     router.refresh()
   }
 
+  function openEdit(s: any) {
+    setEditing(s)
+    setEditNumero(String(s.numero))
+    setEditDesc(s.descripcion ?? '')
+  }
+
+  const editNumeroDuplicado = useMemo(() => {
+    if (!editing) return false
+    const numero = editNumero.trim().toUpperCase()
+    return albumStickers.some((s) => s.id !== editing.id && String(s.numero).toUpperCase() === numero)
+  }, [editing, editNumero, albumStickers])
+
+  async function handleEdit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!editing) return
+    const numero = editNumero.trim().toUpperCase()
+    if (!numero || editNumeroDuplicado) return
+    setLoadingEdit(true)
+    // El trigger trg_sync_producto_from_sticker propaga el cambio a `productos`.
+    const { error } = await supabase
+      .from('stickers')
+      .update({ numero, descripcion: editDesc.trim() || null })
+      .eq('id', editing.id)
+    setLoadingEdit(false)
+    if (error) {
+      alert(`No se pudo guardar: ${error.message}`)
+      return
+    }
+    setEditing(null)
+    router.refresh()
+  }
+
   async function handleDelete(id: number) {
-    // Stock y ventas reales viven ahora en producto_variantes/inventario/
-    // sale_items_v2 (stock_stickers/sale_items quedaron como historial legacy).
+    // Stock y ventas viven en producto_variantes/inventario/sale_items_v2.
     const { data: producto } = await supabase
       .from('productos')
       .select('id, producto_variantes(id, inventario(cantidad))')
@@ -128,15 +166,58 @@ export default function StickersClient({ albums, stickers }: { albums: any[]; st
     }
 
     if (!confirm('¿Eliminar esta lámina del catálogo?')) return
-    await supabase.from('stock_stickers').delete().eq('sticker_id', id)
     await supabase.from('stickers').delete().eq('id', id)
+    setEditing(null)
     router.refresh()
   }
 
   async function handleDeleteAll() {
     if (!selectedAlbum) return
+    const stickerIds = albumStickers.map((s) => s.id)
+    const numeroPorSticker = new Map(albumStickers.map((s) => [s.id, s.numero]))
+
+    // Mismas validaciones que handleDelete, pero para todo el álbum. Se consulta
+    // por lotes para no exceder el largo de URL con álbumes grandes.
+    const CHUNK = 200
+    const conStock: string[] = []
+    const varianteIds: number[] = []
+    for (let i = 0; i < stickerIds.length; i += CHUNK) {
+      const { data: productos, error } = await supabase
+        .from('productos')
+        .select('legacy_id, producto_variantes(id, inventario(cantidad))')
+        .eq('legacy_table', 'stickers')
+        .in('legacy_id', stickerIds.slice(i, i + CHUNK))
+      if (error) {
+        alert(`No se pudo validar el stock: ${error.message}`)
+        return
+      }
+      for (const p of productos ?? []) {
+        const variantes: any[] = p.producto_variantes ?? []
+        variantes.forEach((v) => varianteIds.push(v.id))
+        const stock = variantes.reduce((a: number, v: any) => a + (v.inventario?.cantidad ?? 0), 0)
+        if (stock > 0) conStock.push(`#${numeroPorSticker.get(p.legacy_id)}`)
+      }
+    }
+
+    if (conStock.length > 0) {
+      const muestra = conStock.slice(0, 10).join(', ') + (conStock.length > 10 ? '…' : '')
+      alert(`No se puede eliminar: ${conStock.length} lámina(s) tienen stock (${muestra}). Reduce el stock a 0 primero.`)
+      return
+    }
+
+    for (let i = 0; i < varianteIds.length; i += CHUNK) {
+      const { count } = await supabase
+        .from('sale_items_v2').select('id', { count: 'exact', head: true })
+        .in('variante_id', varianteIds.slice(i, i + CHUNK))
+      if (count && count > 0) {
+        alert('No se puede eliminar: hay láminas de este álbum con historial de ventas registradas.')
+        return
+      }
+    }
+
     if (!confirm(`¿Eliminar TODAS las láminas de "${album?.nombre}"? Esta acción no se puede deshacer.`)) return
-    await supabase.from('stickers').delete().eq('album_id', Number(selectedAlbum))
+    const { error } = await supabase.from('stickers').delete().eq('album_id', Number(selectedAlbum))
+    if (error) alert(`No se pudo eliminar: ${error.message}`)
     router.refresh()
   }
 
@@ -277,8 +358,58 @@ export default function StickersClient({ albums, stickers }: { albums: any[]; st
 
       {/* Tabla de láminas registradas */}
       {selectedAlbum && albumStickers.length > 0 && (
-        <StickersTable stickers={albumStickers} onDelete={handleDelete} />
+        <StickersTable stickers={albumStickers} onSelect={openEdit} />
       )}
+
+      {/* Editar lámina */}
+      <Dialog open={!!editing} onOpenChange={(o) => !o && setEditing(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Editar lámina</DialogTitle>
+          </DialogHeader>
+          {editing && (
+            <form onSubmit={handleEdit} className="space-y-3">
+              {editing.imagen_url ? (
+                <div className="relative w-32 mx-auto aspect-square rounded overflow-hidden bg-gray-100">
+                  <Image src={editing.imagen_url} alt={editing.descripcion ?? `#${editing.numero}`} fill className="object-cover" unoptimized />
+                </div>
+              ) : (
+                <p className="text-xs text-gray-400 text-center">
+                  Sin imagen. Las imágenes se cargan desde Inventario → Láminas sueltas.
+                </p>
+              )}
+              <div className="space-y-1.5">
+                <Label>Número de lámina</Label>
+                <Input
+                  value={editNumero}
+                  onChange={(e) => setEditNumero(e.target.value.toUpperCase())}
+                  required
+                />
+                {editNumeroDuplicado && (
+                  <p className="text-xs text-red-500">Ya existe otra lámina con ese número en el álbum</p>
+                )}
+              </div>
+              <div className="space-y-1.5">
+                <Label>Descripción (opcional)</Label>
+                <Input value={editDesc} onChange={(e) => setEditDesc(e.target.value)} />
+              </div>
+              <div className="flex gap-2 pt-1">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="text-red-600 hover:text-red-700"
+                  onClick={() => handleDelete(editing.id)}
+                >
+                  <Trash2 className="h-4 w-4 mr-1" /> Eliminar
+                </Button>
+                <Button type="submit" className="flex-1" disabled={loadingEdit || !editNumero.trim() || editNumeroDuplicado}>
+                  {loadingEdit ? 'Guardando...' : 'Guardar cambios'}
+                </Button>
+              </div>
+            </form>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Estado vacío */}
       {!selectedAlbum && (
@@ -291,12 +422,7 @@ export default function StickersClient({ albums, stickers }: { albums: any[]; st
   )
 }
 
-function getImagen(s: any): string | null {
-  const entries: any[] = s.stock_stickers ?? []
-  return entries.find((e) => e.imagen_url)?.imagen_url ?? null
-}
-
-function StickersTable({ stickers, onDelete }: { stickers: any[]; onDelete: (id: number) => void }) {
+function StickersTable({ stickers, onSelect }: { stickers: any[]; onSelect: (s: any) => void }) {
   const sorted = [...stickers].sort((a, b) =>
     String(a.numero).localeCompare(String(b.numero), 'es', { numeric: true })
   )
@@ -324,13 +450,13 @@ function StickersTable({ stickers, onDelete }: { stickers: any[]; onDelete: (id:
             </p>
             <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8">
               {items.map((s) => {
-                const img = getImagen(s)
+                const img = s.imagen_url
                 return (
                   <button
                     key={s.id}
-                    onClick={() => onDelete(s.id)}
-                    title="Click para eliminar"
-                    className="group flex flex-col items-center gap-1 bg-gray-50 border border-gray-200 rounded-lg p-1.5 hover:bg-red-50 hover:border-red-300 transition-colors"
+                    onClick={() => onSelect(s)}
+                    title="Click para editar"
+                    className="group flex flex-col items-center gap-1 bg-gray-50 border border-gray-200 rounded-lg p-1.5 hover:bg-blue-50 hover:border-blue-300 transition-colors"
                   >
                     {img ? (
                       <div className="relative w-full aspect-square rounded overflow-hidden bg-gray-100">
@@ -341,7 +467,7 @@ function StickersTable({ stickers, onDelete }: { stickers: any[]; onDelete: (id:
                         <ImageIcon className="h-4 w-4 text-gray-300" />
                       </div>
                     )}
-                    <span className="text-xs font-semibold text-gray-700 group-hover:text-red-600 leading-tight text-center">
+                    <span className="text-xs font-semibold text-gray-700 group-hover:text-blue-600 leading-tight text-center">
                       {s.descripcion ?? `#${s.numero}`}
                     </span>
                   </button>
@@ -351,7 +477,7 @@ function StickersTable({ stickers, onDelete }: { stickers: any[]; onDelete: (id:
           </div>
         ))}
       </div>
-      <p className="text-xs text-gray-400 mt-4">Click en una lámina para eliminarla</p>
+      <p className="text-xs text-gray-400 mt-4">Click en una lámina para editarla o eliminarla</p>
     </div>
   )
 }

@@ -18,8 +18,6 @@ import Image from 'next/image'
 interface CartItem {
   variante_id: number
   categoria_slug: string
-  es_combo: boolean
-  combo_legacy_id: number | null
   label: string
   cantidad: number
   precio_unitario: number
@@ -66,13 +64,11 @@ export default function SalesClient({ sales, variantes }: {
   function getItemOptions() {
     return variantes
       .filter((v: any) => v.productos?.categorias?.slug === itemCategoria)
-      .filter((v: any) => itemCategoria === 'combo' || (v.inventario?.cantidad ?? 0) > 0)
+      .filter((v: any) => (v.inventario?.cantidad ?? 0) > 0)
       .map((v: any) => ({
         value: String(v.id),
-        label: itemCategoria === 'combo' ? labelForVariante(v) : `${labelForVariante(v)} (${v.inventario?.cantidad ?? 0} disp.)`,
+        label: `${labelForVariante(v)} (${v.inventario?.cantidad ?? 0} disp.)`,
         precio: v.precio_venta,
-        es_combo: v.legacy_table === 'combos',
-        combo_legacy_id: v.legacy_table === 'combos' ? v.legacy_id : null,
       }))
   }
 
@@ -90,8 +86,6 @@ export default function SalesClient({ sales, variantes }: {
       setCart([...cart, {
         variante_id: Number(itemRef),
         categoria_slug: itemCategoria,
-        es_combo: found.es_combo,
-        combo_legacy_id: found.combo_legacy_id,
         label: found.label,
         cantidad: Number(itemQty),
         precio_unitario: found.precio,
@@ -136,29 +130,15 @@ export default function SalesClient({ sales, variantes }: {
       return
     }
 
-    // Descontar inventario de forma atómica (directo, o por componente si es un combo)
+    // Descontar inventario de forma atómica. Los combos tienen stock propio (sus
+    // ítems ya se apartaron al armarlos), así que se descuentan igual que el resto.
     const decrementados: { variante_id: number; cantidad: number }[] = []
     let stockError: string | null = null
 
     for (const item of cart) {
-      if (item.es_combo && item.combo_legacy_id) {
-        const { data: componentes } = await supabase
-          .from('combo_componentes')
-          .select('variante_id, cantidad')
-          .eq('combo_id', item.combo_legacy_id)
-
-        for (const c of componentes ?? []) {
-          const unidades = c.cantidad * item.cantidad
-          const { data: ok } = await supabase.rpc('descontar_inventario', { p_variante_id: c.variante_id, p_cantidad: unidades })
-          if (ok) decrementados.push({ variante_id: c.variante_id, cantidad: unidades })
-          else { stockError = `Sin stock suficiente para un componente de "${item.label}".`; break }
-        }
-      } else {
-        const { data: ok } = await supabase.rpc('descontar_inventario', { p_variante_id: item.variante_id, p_cantidad: item.cantidad })
-        if (ok) decrementados.push({ variante_id: item.variante_id, cantidad: item.cantidad })
-        else stockError = `Sin stock suficiente para "${item.label}".`
-      }
-      if (stockError) break
+      const { data: ok } = await supabase.rpc('descontar_inventario', { p_variante_id: item.variante_id, p_cantidad: item.cantidad })
+      if (ok) decrementados.push({ variante_id: item.variante_id, cantidad: item.cantidad })
+      else { stockError = `Sin stock suficiente para "${item.label}".`; break }
     }
 
     if (stockError) {
