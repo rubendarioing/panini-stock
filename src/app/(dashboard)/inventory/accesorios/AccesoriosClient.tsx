@@ -43,29 +43,35 @@ export default function AccesoriosClient({ variantes, albums }: { variantes: any
   const router = useRouter()
 
   // Sobres/cajas no tienen catálogo propio (a diferencia de albums/stickers): el
-  // "producto" (categoría Sobre/Caja de un álbum) se crea la primera vez que se
-  // registra stock para ese álbum+tipo, y se reutiliza después.
+  // "producto" (categoría Sobre/Caja de un álbum) se identifica por album_id +
+  // categoria_id (único, ver 029_productos_album_id.sql), se crea la primera vez
+  // que se registra stock para ese álbum+tipo y se reutiliza después.
   async function findOrCreateProducto(albumId: number, tipo: string, album: any): Promise<number | null> {
-    const legacyTable = `stock_accesorios_${tipo}`
-    const { data: existing } = await supabase
-      .from('productos').select('id')
-      .eq('legacy_table', legacyTable).eq('legacy_id', albumId)
-      .maybeSingle()
-    if (existing) return existing.id
-
     const { data: categoria } = await supabase.from('categorias').select('id').eq('slug', tipo).single()
     if (!categoria) return null
 
+    const findExisting = () => supabase
+      .from('productos').select('id')
+      .eq('album_id', albumId).eq('categoria_id', categoria.id)
+      .maybeSingle()
+
+    const { data: existing } = await findExisting()
+    if (existing) return existing.id
+
     const { data: created, error } = await supabase.from('productos').insert({
       categoria_id: categoria.id,
+      album_id: albumId,
       type_id: album?.type_id ?? null,
       anio: album?.anio ?? null,
       nombre: `${album?.nombre ?? ''} - ${tipo === 'sobre' ? 'Sobre' : 'Caja'}`,
       activo: true,
-      legacy_table: legacyTable,
-      legacy_id: albumId,
     }).select('id').single()
 
+    if (error?.code === '23505') {
+      // Otro usuario lo creó al mismo tiempo: usar ese.
+      const { data: again } = await findExisting()
+      return again?.id ?? null
+    }
     return error ? null : (created?.id ?? null)
   }
 
@@ -90,7 +96,7 @@ export default function AccesoriosClient({ variantes, albums }: { variantes: any
   function openEdit(item: any) {
     setEditing(item)
     setForm({
-      album_id: String(item.productos?.legacy_id ?? ''),
+      album_id: String(item.productos?.album_id ?? ''),
       tipo: item.productos?.categorias?.slug ?? 'sobre',
       cantidad_contenido: item.unidades_contenidas ? String(item.unidades_contenidas) : '',
       cantidad: String(item.inventario?.cantidad ?? 0),

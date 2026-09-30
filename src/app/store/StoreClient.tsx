@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge'
 import { formatCurrency } from '@/lib/utils'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
+import { labelForVariante } from '@/lib/product-labels'
 
 interface CartItem {
   variante_id: number
@@ -21,10 +22,11 @@ interface CartItem {
   stock_disponible: number
 }
 
-export default function StoreClient({ variantes, collectionTypes, varianteImagenes }: {
+export default function StoreClient({ variantes, collectionTypes, varianteImagenes, comboComponentes }: {
   variantes: any[]
   collectionTypes: any[]
   varianteImagenes: any[]
+  comboComponentes: any[]
 }) {
   const [cart, setCart] = useState<CartItem[]>([])
   const [cartOpen, setCartOpen] = useState(false)
@@ -57,8 +59,8 @@ export default function StoreClient({ variantes, collectionTypes, varianteImagen
 
     const channel = supabase
       .channel('store-stock')
-      // Inventario: única fuente de cambios de cantidad para álbumes/sobres/
-      // cajas/láminas (los combos no tienen fila de inventario propia).
+      // Inventario: única fuente de cambios de cantidad para todos los productos,
+      // combos incluidos (tienen stock propio, ver 031_combos_stock_reservado.sql).
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'inventario' }, ({ new: row }) => {
         if (row.cantidad > 0) router.refresh()
         showToast()
@@ -114,13 +116,35 @@ export default function StoreClient({ variantes, collectionTypes, varianteImagen
     return map
   }, [varianteImagenes])
 
+  // Ítems de cada combo (v_combo_componentes_publico), por variante del combo.
+  const itemsPorCombo = useMemo(() => {
+    const map: Record<number, { label: string; notas: string | null }[]> = {}
+    for (const c of comboComponentes) {
+      const label = labelForVariante({
+        estado: c.estado,
+        es_repetida: c.es_repetida,
+        unidades_contenidas: c.unidades_contenidas,
+        productos: {
+          nombre: c.producto_nombre,
+          anio: c.anio,
+          numero: c.producto_numero,
+          descripcion: c.producto_descripcion,
+          categorias: { slug: c.categoria_slug },
+          collection_types: { nombre: c.coleccion_nombre },
+        },
+      })
+      ;(map[c.combo_variante_id] ??= []).push({ label: `${c.cantidad}x ${label}`, notas: c.notas ?? null })
+    }
+    return map
+  }, [comboComponentes])
+
   const products = useMemo(() => {
     return liveVariantes
-      .filter((v: any) => v.activo && (v.categoria_slug === 'combo' || v.cantidad > 0))
+      .filter((v: any) => v.activo && v.cantidad > 0)
       .map((v: any) => {
         const imgs = imagenesMap[v.id] ?? []
         const mainImg = imgs[0] ?? v.imagen_url ?? v.producto_imagen_url ?? null
-        const stock = v.categoria_slug === 'combo' ? 999 : v.cantidad
+        const stock = v.cantidad
 
         let label = v.producto_nombre ?? 'Producto'
         let sublabel = [v.coleccion_nombre, v.anio].filter(Boolean).join(' ')
@@ -162,13 +186,14 @@ export default function StoreClient({ variantes, collectionTypes, varianteImagen
           imagenes: imgs.length > 0 ? imgs : (mainImg ? [mainImg] : []),
           descripcion: v.categoria_slug === 'lamina' ? (v.producto_descripcion ?? '') : '',
           notas: v.notas ?? '',
+          comboItems: v.categoria_slug === 'combo' ? (itemsPorCombo[v.id] ?? []) : [],
           precio: v.precio_venta,
           stock,
           badge,
           badgeVariant,
         }
       })
-  }, [liveVariantes, imagenesMap])
+  }, [liveVariantes, imagenesMap, itemsPorCombo])
 
   const categories = [
     { value: 'all', label: 'Todo' },
@@ -185,7 +210,8 @@ export default function StoreClient({ variantes, collectionTypes, varianteImagen
       p.label.toLowerCase().includes(q) ||
       p.sublabel?.toLowerCase().includes(q) ||
       p.descripcion?.toLowerCase().includes(q) ||
-      p.notas?.toLowerCase().includes(q)
+      p.notas?.toLowerCase().includes(q) ||
+      p.comboItems.some((item) => item.label.toLowerCase().includes(q) || item.notas?.toLowerCase().includes(q))
     const matchCategory = filterCategory === 'all' || p.categoria === filterCategory
     return matchSearch && matchCategory
   })
@@ -423,6 +449,19 @@ async function handleOrder(e: React.FormEvent) {
                   <p className="font-semibold text-gray-900 text-xs sm:text-sm leading-tight line-clamp-2">{product.label}</p>
                   {product.sublabel && <p className="text-[10px] sm:text-xs text-gray-400 mt-0.5 line-clamp-1">{product.sublabel}</p>}
                   {product.notas && <p className="text-[10px] sm:text-xs text-gray-500 mt-0.5 line-clamp-2">{product.notas}</p>}
+                  {product.comboItems.length > 0 && (
+                    <div className="mt-1.5">
+                      <p className="text-[10px] sm:text-xs font-medium text-gray-600">Incluye:</p>
+                      <ul className="text-[10px] sm:text-xs text-gray-500 space-y-0.5">
+                        {product.comboItems.map((item, i) => (
+                          <li key={i}>
+                            <span className="line-clamp-2">• {item.label}</span>
+                            {item.notas && <span className="block pl-2 text-gray-400 italic line-clamp-2">{item.notas}</span>}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                   <div className="mt-auto pt-2">
                     <p className="text-base sm:text-lg font-bold text-[#003DA5]">{formatCurrency(product.precio)}</p>
                     {product.stock < 999 && <p className="text-[10px] sm:text-xs text-gray-400">{product.stock} disp.</p>}

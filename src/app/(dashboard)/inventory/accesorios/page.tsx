@@ -11,7 +11,7 @@ export default async function AccesoriosPage() {
         *,
         inventario ( cantidad ),
         producto_variante_imagenes ( id, url, orden ),
-        productos ( nombre, anio, imagen_url, legacy_table, legacy_id, categorias ( slug ), collection_types ( nombre ) )
+        productos ( nombre, anio, imagen_url, album_id, categorias ( slug ), collection_types ( nombre ) )
       `)
       .order('fecha_compra', { ascending: false }),
     supabase

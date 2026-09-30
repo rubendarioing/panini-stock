@@ -48,32 +48,13 @@ export async function POST(request: Request) {
   const { data: variantes } = await supabase
     .from('producto_variantes')
     .select(`
-      id, estado, es_repetida, unidades_contenidas, legacy_table, legacy_id,
+      id, estado, es_repetida, unidades_contenidas,
       inventario ( cantidad ),
       productos ( nombre, anio, descripcion, categorias ( slug ), collection_types ( nombre ) )
     `)
     .in('id', varianteIds)
 
   const varianteMap = new Map((variantes ?? []).map((v: any) => [v.id, v]))
-
-  // Combos: cargar sus componentes agrupados por combo_id
-  const comboLegacyIds = [...new Set(
-    (variantes ?? []).filter((v: any) => v.legacy_table === 'combos').map((v: any) => v.legacy_id)
-  )]
-
-  const { data: componentesRaw } = comboLegacyIds.length
-    ? await supabase
-        .from('combo_componentes')
-        .select('combo_id, cantidad, variante_id, producto_variantes ( inventario ( cantidad ), productos ( nombre ) )')
-        .in('combo_id', comboLegacyIds)
-    : { data: [] as any[] }
-
-  const componentesPorCombo = new Map<number, any[]>()
-  for (const c of componentesRaw ?? []) {
-    const list = componentesPorCombo.get(c.combo_id) ?? []
-    list.push(c)
-    componentesPorCombo.set(c.combo_id, list)
-  }
 
   // Validar stock antes de procesar
   for (const item of items) {
@@ -82,27 +63,13 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Uno de los productos del carrito ya no existe.' }, { status: 409 })
     }
 
-    if (v.legacy_table === 'combos') {
-      const componentes = componentesPorCombo.get(v.legacy_id) ?? []
-      for (const c of componentes) {
-        const unidades = c.cantidad * item.cantidad
-        const disponible = c.producto_variantes?.inventario?.cantidad ?? 0
-        if (disponible < unidades) {
-          const nombreComp = c.producto_variantes?.productos?.nombre ?? 'un componente'
-          return NextResponse.json(
-            { error: `Stock insuficiente para "${nombreComp}" (componente de "${v.productos?.nombre}"). Disponible: ${disponible}.` },
-            { status: 409 }
-          )
-        }
-      }
-    } else {
-      const disponible = v.inventario?.cantidad ?? 0
-      if (disponible < item.cantidad) {
-        return NextResponse.json(
-          { error: `Stock insuficiente para "${labelForVariante(v)}". Disponible: ${disponible}.` },
-          { status: 409 }
-        )
-      }
+    // Combos incluidos: tienen stock propio (031_combos_stock_reservado.sql).
+    const disponible = v.inventario?.cantidad ?? 0
+    if (disponible < item.cantidad) {
+      return NextResponse.json(
+        { error: `Stock insuficiente para "${labelForVariante(v)}". Disponible: ${disponible}.` },
+        { status: 409 }
+      )
     }
   }
 
@@ -183,31 +150,14 @@ export async function POST(request: Request) {
   for (const item of items) {
     const v = varianteMap.get(item.variante_id)
 
-    if (v?.legacy_table === 'combos') {
-      const componentes = componentesPorCombo.get(v.legacy_id) ?? []
-      for (const c of componentes) {
-        const unidades = c.cantidad * item.cantidad
-        const { data: ok } = await supabase.rpc('descontar_inventario', {
-          p_variante_id: c.variante_id,
-          p_cantidad: unidades,
-        })
-        if (ok) {
-          decrementados.push({ variante_id: c.variante_id, cantidad: unidades })
-        } else {
-          stockError = `Se agotó el stock de "${c.producto_variantes?.productos?.nombre ?? 'un componente'}" antes de confirmar tu pedido.`
-          break
-        }
-      }
+    const { data: ok } = await supabase.rpc('descontar_inventario', {
+      p_variante_id: item.variante_id,
+      p_cantidad: item.cantidad,
+    })
+    if (ok) {
+      decrementados.push({ variante_id: item.variante_id, cantidad: item.cantidad })
     } else {
-      const { data: ok } = await supabase.rpc('descontar_inventario', {
-        p_variante_id: item.variante_id,
-        p_cantidad: item.cantidad,
-      })
-      if (ok) {
-        decrementados.push({ variante_id: item.variante_id, cantidad: item.cantidad })
-      } else {
-        stockError = `Se agotó el stock de "${labelForVariante(v)}" antes de confirmar tu pedido.`
-      }
+      stockError = `Se agotó el stock de "${labelForVariante(v)}" antes de confirmar tu pedido.`
     }
 
     if (stockError) break

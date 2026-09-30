@@ -35,33 +35,6 @@ export interface Sticker {
   albums?: Album
 }
 
-export interface StockAlbum {
-  id: number
-  album_id: number
-  cantidad: number
-  precio_compra: number
-  precio_venta: number
-  fecha_compra: string
-  condicion: 'nuevo' | 'usado' | 'sellado'
-  estado: 'lleno' | 'vacio'
-  usuario_id: string
-  notas: string | null
-  albums?: Album
-}
-
-export interface StockSticker {
-  id: number
-  sticker_id: number
-  cantidad: number
-  precio_compra: number
-  precio_venta: number
-  fecha_compra: string
-  es_repetida: boolean
-  usuario_id: string
-  notas: string | null
-  stickers?: Sticker & { albums?: Album }
-}
-
 export interface Combo {
   id: number
   nombre: string
@@ -69,16 +42,6 @@ export interface Combo {
   precio_total: number
   activo: boolean
   creado_por: string
-  combo_items?: ComboItem[]
-}
-
-export interface ComboItem {
-  id: number
-  combo_id: number
-  tipo: 'album' | 'sticker'
-  stock_album_id: number | null
-  stock_sticker_id: number | null
-  cantidad: number
 }
 
 export interface Sale {
@@ -90,24 +53,12 @@ export interface Sale {
   fecha: string
   usuario_id: string
   notas: string | null
-  sale_items?: SaleItem[]
   profiles?: Profile
 }
 
-export interface SaleItem {
-  id: number
-  sale_id: number
-  tipo: 'album' | 'sticker' | 'combo'
-  referencia_id: number
-  cantidad: number
-  precio_unitario: number
-  subtotal: number
-}
-
 // ---------------------------------------------------------------------------
-// Modelo unificado producto/variante/inventario (fase 1 de la migración,
-// ver supabase/migrations/011..021). Coexiste con los tipos legacy de arriba
-// hasta que las páginas se migren en la fase 2 (cutover).
+// Modelo unificado producto/variante/inventario (ver supabase/migrations/011..030).
+// Las tablas legacy de stock/ventas/combos se eliminaron en 030.
 // ---------------------------------------------------------------------------
 
 export interface Categoria {
@@ -129,6 +80,7 @@ export interface Producto {
   descripcion: string | null
   imagen_url: string | null
   activo: boolean
+  album_id: number | null
   legacy_table: string | null
   legacy_id: number | null
   categorias?: Categoria

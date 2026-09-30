@@ -8,6 +8,7 @@ export default async function StorePage() {
     { data: variantes },
     { data: collectionTypes },
     { data: varianteImagenes },
+    { data: comboComponentes },
   ] = await Promise.all([
     supabase
       .from('v_producto_variantes_publico')
@@ -22,6 +23,9 @@ export default async function StorePage() {
       .from('producto_variante_imagenes')
       .select('variante_id, url, orden')
       .order('orden'),
+    supabase
+      .from('v_combo_componentes_publico')
+      .select('*'),
   ])
 
   return (
@@ -29,6 +33,7 @@ export default async function StorePage() {
       variantes={variantes ?? []}
       collectionTypes={collectionTypes ?? []}
       varianteImagenes={varianteImagenes ?? []}
+      comboComponentes={comboComponentes ?? []}
     />
   )
 }
