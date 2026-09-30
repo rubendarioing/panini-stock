@@ -36,6 +36,7 @@ export default function AlbumsStockClient({ variantes, productos }: { variantes:
   const [removedIds, setRemovedIds]         = useState<number[]>([])
   const [loading, setLoading] = useState(false)
   const [filterEstado, setFilterEstado] = useState('all')
+  const [filterAlbum, setFilterAlbum] = useState('all')
   const [adjustItem, setAdjustItem] = useState<any>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const supabase = createClient()
@@ -171,20 +172,28 @@ export default function AlbumsStockClient({ variantes, productos }: { variantes:
     router.refresh()
   }
 
-  const filtered = variantes.filter((s) => {
+  // Álbumes con al menos un registro de stock (cada álbum es un producto).
+  const albumsConStock = [...new Map(
+    variantes.map((v) => [v.producto_id, { id: v.producto_id, ...v.productos }])
+  ).values()].sort((a: any, b: any) =>
+    (b.anio ?? 0) - (a.anio ?? 0) || String(a.nombre).localeCompare(String(b.nombre), 'es'))
+
+  const porAlbum = filterAlbum === 'all' ? variantes : variantes.filter((s) => String(s.producto_id) === filterAlbum)
+
+  const filtered = porAlbum.filter((s) => {
     if (filterEstado === 'lleno') return s.estado === 'lleno'
     if (filterEstado === 'vacio') return s.estado === 'vacio'
     if (filterEstado === 'set_a_pegar') return s.estado === 'set_a_pegar'
     return true
   })
 
-  const totalLlenos    = variantes.filter(s => s.estado === 'lleno').reduce((a, s) => a + (s.inventario?.cantidad ?? 0), 0)
-  const totalVacios    = variantes.filter(s => s.estado === 'vacio').reduce((a, s) => a + (s.inventario?.cantidad ?? 0), 0)
-  const totalSetAPegar = variantes.filter(s => s.estado === 'set_a_pegar').reduce((a, s) => a + (s.inventario?.cantidad ?? 0), 0)
+  const totalLlenos    = porAlbum.filter(s => s.estado === 'lleno').reduce((a, s) => a + (s.inventario?.cantidad ?? 0), 0)
+  const totalVacios    = porAlbum.filter(s => s.estado === 'vacio').reduce((a, s) => a + (s.inventario?.cantidad ?? 0), 0)
+  const totalSetAPegar = porAlbum.filter(s => s.estado === 'set_a_pegar').reduce((a, s) => a + (s.inventario?.cantidad ?? 0), 0)
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-3">
           <Link href="/inventory" className="text-gray-400 hover:text-gray-600">
             <ArrowLeft className="h-5 w-5" />
@@ -200,7 +209,19 @@ export default function AlbumsStockClient({ variantes, productos }: { variantes:
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
+          <select
+            value={filterAlbum}
+            onChange={(e) => setFilterAlbum(e.target.value)}
+            className="h-10 max-w-[16rem] rounded-md border border-gray-300 bg-white px-3 text-sm text-gray-700 outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="all">Todos los álbumes</option>
+            {albumsConStock.map((a: any) => (
+              <option key={a.id} value={String(a.id)}>
+                {a.collection_types?.nombre ? `${a.collection_types.nombre} — ` : ''}{a.nombre} {a.anio ?? ''}
+              </option>
+            ))}
+          </select>
           <select
             value={filterEstado}
             onChange={(e) => setFilterEstado(e.target.value)}
