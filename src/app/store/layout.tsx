@@ -1,4 +1,5 @@
 import type { Metadata } from 'next'
+import { WhatsAppButton } from '@/components/store/WhatsAppButton'
 
 export const metadata: Metadata = {
   title: 'Tienda — Pegando Historia Stock',
@@ -27,6 +28,7 @@ export default function StoreLayout({ children }: { children: React.ReactNode })
       <footer className="border-t border-gray-200 mt-16 py-6 text-center text-sm text-gray-400">
         <span className="font-bold text-[#003DA5]">PANINI</span> Stock &copy; {new Date().getFullYear()}
       </footer>
+      <WhatsAppButton />
     </div>
   )
 }
