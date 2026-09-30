@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { ArrowLeft, Trash2, Layers, Plus, ListPlus, ImageIcon } from 'lucide-react'
 import Image from 'next/image'
 import Link from 'next/link'
+import { esMundial } from '@/lib/product-labels'
 
 export default function StickersClient({ albums, stickers }: { albums: any[]; stickers: any[] }) {
   const [selectedAlbum, setSelectedAlbum] = useState<string>('')
@@ -21,6 +22,7 @@ export default function StickersClient({ albums, stickers }: { albums: any[]; st
   const [rangeFrom, setRangeFrom] = useState('1')
   const [rangeTo, setRangeTo] = useState('')
   const [rangePrefix, setRangePrefix] = useState('')
+  const [numeroPrefix, setNumeroPrefix] = useState('')
 
   // Individual
   const [singleNumero, setSingleNumero] = useState('')
@@ -42,15 +44,14 @@ export default function StickersClient({ albums, stickers }: { albums: any[]; st
     [stickers, selectedAlbum]
   )
 
+  // Todos los números del álbum (con o sin descripción): stickers tiene
+  // unique(album_id, numero), así que cualquier número repetido falla al insertar.
   const existingNumbers = useMemo(
-    () => new Set(albumStickers.filter((s) => !s.descripcion).map((s) => String(s.numero))),
+    () => new Set(albumStickers.map((s) => String(s.numero).toUpperCase())),
     [albumStickers]
   )
 
-  const existingDescriptions = useMemo(
-    () => new Set(albumStickers.map((s) => s.descripcion).filter(Boolean)),
-    [albumStickers]
-  )
+  const numeroRango = (n: number) => `${numeroPrefix}${n}`
 
   async function handleBulk(e: React.FormEvent) {
     e.preventDefault()
@@ -63,26 +64,30 @@ export default function StickersClient({ albums, stickers }: { albums: any[]; st
 
     const nuevas = []
     for (let n = from; n <= to; n++) {
-      const desc = rangePrefix ? `${rangePrefix} ${n}` : null
-      const yaExiste = desc ? existingDescriptions.has(desc) : existingNumbers.has(String(n))
-      if (!yaExiste) {
+      const numero = numeroRango(n)
+      if (!existingNumbers.has(numero)) {
         nuevas.push({
           album_id: Number(selectedAlbum),
-          numero: String(n),
-          descripcion: desc,
+          numero,
+          descripcion: rangePrefix ? `${rangePrefix} ${n}` : null,
         })
       }
     }
 
-    if (nuevas.length > 0) {
-      const CHUNK = 200
-      for (let i = 0; i < nuevas.length; i += CHUNK) {
-        await supabase.from('stickers').insert(nuevas.slice(i, i + CHUNK))
-      }
+    let creadas = 0
+    let errorMsg: string | null = null
+    const CHUNK = 200
+    for (let i = 0; i < nuevas.length; i += CHUNK) {
+      const lote = nuevas.slice(i, i + CHUNK)
+      const { error } = await supabase.from('stickers').insert(lote)
+      if (error) { errorMsg = error.message; break }
+      creadas += lote.length
     }
 
     setLoadingBulk(false)
+    if (errorMsg) alert(`Se crearon ${creadas} lámina(s) y luego falló: ${errorMsg}`)
     setRangePrefix('')
+    setNumeroPrefix('')
     router.refresh()
   }
 
@@ -95,12 +100,13 @@ export default function StickersClient({ albums, stickers }: { albums: any[]; st
       return
     }
     setLoadingSingle(true)
-    await supabase.from('stickers').insert({
+    const { error } = await supabase.from('stickers').insert({
       album_id: Number(selectedAlbum),
       numero,
       descripcion: singleDesc || null,
     })
     setLoadingSingle(false)
+    if (error) { alert(`No se pudo agregar: ${error.message}`); return }
     setSingleNumero('')
     setSingleDesc('')
     router.refresh()
@@ -226,12 +232,11 @@ export default function StickersClient({ albums, stickers }: { albums: any[]; st
     const to = Number(rangeTo)
     if (!rangeTo || from > to) return null
     const total = to - from + 1
-    const yaExisten = Array.from({ length: total }, (_, i) => from + i).filter((n) => {
-      const desc = rangePrefix ? `${rangePrefix} ${n}` : null
-      return desc ? existingDescriptions.has(desc) : existingNumbers.has(String(n))
-    }).length
-    return { total, nuevas: total - yaExisten, yaExisten }
-  }, [rangeFrom, rangeTo, rangePrefix, existingNumbers, existingDescriptions])
+    const yaExisten = Array.from({ length: total }, (_, i) => from + i)
+      .filter((n) => existingNumbers.has(numeroRango(n))).length
+    return { total, nuevas: total - yaExisten, yaExisten, primera: numeroRango(from), ultima: numeroRango(to) }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rangeFrom, rangeTo, numeroPrefix, existingNumbers])
 
   return (
     <div className="space-y-6">
@@ -297,15 +302,36 @@ export default function StickersClient({ albums, stickers }: { albums: any[]; st
                   <Input type="number" min="1" value={rangeTo} onChange={(e) => setRangeTo(e.target.value)} required />
                 </div>
               </div>
-              <div className="space-y-1.5">
-                <Label>Prefijo de descripción (opcional)</Label>
-                <Input placeholder="Ej: Jugador, Escudo..." value={rangePrefix} onChange={(e) => setRangePrefix(e.target.value)} />
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label>Prefijo de número (opcional)</Label>
+                  <Input
+                    placeholder="Ej: U"
+                    value={numeroPrefix}
+                    onChange={(e) => setNumeroPrefix(e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, ''))}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Prefijo de descripción (opcional)</Label>
+                  <Input placeholder="Ej: Jugador, Escudo..." value={rangePrefix} onChange={(e) => setRangePrefix(e.target.value)} />
+                </div>
               </div>
+              {esMundial(album) && (
+                <button
+                  type="button"
+                  onClick={() => { setNumeroPrefix('U'); setRangePrefix('Actualización'); setRangeFrom('1') }}
+                  className="text-xs text-blue-600 hover:underline"
+                >
+                  Usar para set de actualización (U1, U2… · &quot;Actualización N&quot;)
+                </button>
+              )}
 
               {bulkPreview && (
                 <div className="rounded-lg bg-blue-50 border border-blue-100 px-4 py-3 text-sm space-y-0.5">
                   <p className="text-blue-800 font-medium">Vista previa</p>
-                  <p className="text-blue-700">Total en rango: <strong>{bulkPreview.total}</strong></p>
+                  <p className="text-blue-700">
+                    Total en rango: <strong>{bulkPreview.total}</strong> (#{bulkPreview.primera} – #{bulkPreview.ultima})
+                  </p>
                   <p className="text-green-700">Se crearán: <strong>{bulkPreview.nuevas}</strong> láminas nuevas</p>
                   {bulkPreview.yaExisten > 0 && (
                     <p className="text-orange-600">Ya existentes (se omiten): <strong>{bulkPreview.yaExisten}</strong></p>
@@ -428,9 +454,12 @@ function StickersTable({ stickers, onSelect }: { stickers: any[]; onSelect: (s: 
   )
 
   const groups = sorted.reduce((acc: Record<string, any[]>, s) => {
+    // Agrupa por prefijo de descripción; si no hay, por prefijo de número
+    // (ej. U1..U20 del set de actualización -> "Serie U").
+    const serie = String(s.numero).match(/^([A-Za-z]+)\d+$/)?.[1]?.toUpperCase()
     const prefix = s.descripcion
       ? s.descripcion.replace(/\s*\d+$/, '').trim() || 'Sin descripción'
-      : 'Sin descripción'
+      : serie ? `Serie ${serie}` : 'Sin descripción'
     if (!acc[prefix]) acc[prefix] = []
     acc[prefix].push(s)
     return acc

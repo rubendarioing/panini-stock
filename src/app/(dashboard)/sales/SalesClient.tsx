@@ -40,6 +40,7 @@ const CATEGORIAS = [
   { value: 'lamina', label: 'Lámina' },
   { value: 'sobre', label: 'Sobre' },
   { value: 'caja', label: 'Caja' },
+  { value: 'set_actualizacion', label: 'Set de actualización' },
   { value: 'combo', label: 'Combo' },
 ]
 

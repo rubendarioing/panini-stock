@@ -194,7 +194,7 @@ export async function POST(request: Request) {
     const formatCurrency = (n: number) =>
       new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(n)
 
-    const emoji: Record<string, string> = { album: '📘', lamina: '🃏', combo: '🎁', sobre: '📦', caja: '📦' }
+    const emoji: Record<string, string> = { album: '📘', lamina: '🃏', combo: '🎁', sobre: '📦', caja: '📦', set_actualizacion: '🆕' }
 
     // Ítems de los combos del pedido, para detallar qué hay que despachar.
     const comboIds = [...new Set(

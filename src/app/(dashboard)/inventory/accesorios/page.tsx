@@ -21,9 +21,8 @@ export default async function AccesoriosPage() {
       .order('anio', { ascending: false }),
   ])
 
-  const accesorioVariantes = (variantes ?? []).filter((v: any) =>
-    v.productos?.categorias?.slug === 'sobre' || v.productos?.categorias?.slug === 'caja'
-  )
+  const TIPOS = ['sobre', 'caja', 'set_actualizacion']
+  const accesorioVariantes = (variantes ?? []).filter((v: any) => TIPOS.includes(v.productos?.categorias?.slug))
 
   return <AccesoriosClient variantes={accesorioVariantes} albums={albums ?? []} />
 }
