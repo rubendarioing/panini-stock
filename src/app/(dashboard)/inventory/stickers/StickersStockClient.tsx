@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
@@ -10,7 +10,7 @@ import { Badge } from '@/components/ui/badge'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
-import { Plus, Pencil, Trash2, ArrowLeft, Filter, SlidersHorizontal, ImageIcon, X } from 'lucide-react'
+import { Plus, Pencil, Trash2, ArrowLeft, Filter, SlidersHorizontal, ImageIcon, X, Search } from 'lucide-react'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import Link from 'next/link'
 import Image from 'next/image'
@@ -25,6 +25,8 @@ export default function StickersStockClient({ variantes, stickers, stickerProduc
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState<any>(null)
   const [filterRepetida, setFilterRepetida] = useState<string>('all')
+  const [filterAlbum, setFilterAlbum] = useState<string>('all')
+  const [searchLamina, setSearchLamina] = useState('')
   const [selectedAlbum, setSelectedAlbum] = useState<string>('')
   const [form, setForm] = useState({
     sticker_id: '', cantidad: '1', precio_compra: '', precio_venta: '',
@@ -191,11 +193,38 @@ export default function StickersStockClient({ variantes, stickers, stickerProduc
     router.refresh()
   }
 
-  const filtered = variantes.filter((s) => {
-    if (filterRepetida === 'repetida') return s.es_repetida
-    if (filterRepetida === 'normal') return !s.es_repetida
-    return true
-  })
+  // Álbumes que tienen al menos un registro de stock, para el filtro.
+  const albumsConStock = useMemo(() => {
+    const map = new Map<number, any>()
+    for (const v of variantes) {
+      const sticker = getSticker(v)
+      if (sticker && !map.has(sticker.album_id)) map.set(sticker.album_id, { id: sticker.album_id, ...sticker.albums })
+    }
+    return [...map.values()].sort((a, b) => (b.anio ?? 0) - (a.anio ?? 0) || String(a.nombre).localeCompare(String(b.nombre), 'es'))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [variantes, stickers, productoStickerMap])
+
+  const filtered = variantes
+    .filter((s) => {
+      if (filterRepetida === 'repetida' && !s.es_repetida) return false
+      if (filterRepetida === 'normal' && s.es_repetida) return false
+      if (filterAlbum !== 'all' && String(getSticker(s)?.album_id) !== filterAlbum) return false
+      const q = searchLamina.trim().toLowerCase()
+      if (q) {
+        const texto = [s.productos?.numero, s.productos?.descripcion, s.notas]
+          .filter(Boolean).join(' ').toLowerCase()
+        // "#12" o "12" buscan igual; el número exacto también coincide.
+        const qSinNumeral = q.replace(/^#/, '')
+        if (!texto.includes(qSinNumeral) && String(s.productos?.numero ?? '').toLowerCase() !== qSinNumeral) return false
+      }
+      return true
+    })
+    // Con un álbum elegido, ordenar por número de lámina.
+    .sort((a, b) => filterAlbum === 'all'
+      ? 0
+      : String(a.productos?.numero ?? '').localeCompare(String(b.productos?.numero ?? ''), 'es', { numeric: true }))
+
+  const hayFiltros = filterAlbum !== 'all' || searchLamina !== '' || filterRepetida !== 'all'
 
   const totalImages = existingImages.length + pendingImages.length
 
@@ -208,22 +237,12 @@ export default function StickersStockClient({ variantes, stickers, stickerProduc
           </Link>
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Stock de Láminas</h1>
-            <p className="text-gray-500 mt-0.5">{filtered.length} registros</p>
+            <p className="text-gray-500 mt-0.5">
+              {filtered.length} registros · {filtered.reduce((a, v) => a + (v.inventario?.cantidad ?? 0), 0)} unidades
+            </p>
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm">
-            <Filter className="h-4 w-4 text-gray-400" />
-            <select
-              value={filterRepetida}
-              onChange={(e) => setFilterRepetida(e.target.value)}
-              className="outline-none text-gray-700 bg-transparent"
-            >
-              <option value="all">Todas</option>
-              <option value="normal">Normales</option>
-              <option value="repetida">Repetidas</option>
-            </select>
-          </div>
           <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
               <Button onClick={openCreate}><Plus className="h-4 w-4 mr-2" /> Agregar lámina</Button>
@@ -373,6 +392,53 @@ export default function StickersStockClient({ variantes, stickers, stickerProduc
         </div>
       </div>
 
+      {/* Filtros */}
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm">
+          <Filter className="h-4 w-4 text-gray-400" />
+          <select
+            value={filterAlbum}
+            onChange={(e) => setFilterAlbum(e.target.value)}
+            className="outline-none text-gray-700 bg-transparent max-w-[16rem]"
+          >
+            <option value="all">Todos los álbumes</option>
+            {albumsConStock.map((a) => (
+              <option key={a.id} value={String(a.id)}>
+                {a.collection_types?.nombre ? `${a.collection_types.nombre} — ` : ''}{a.nombre} {a.anio ?? ''}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="relative flex-1 min-w-[12rem] max-w-xs">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+          <Input
+            placeholder="Buscar lámina: número, descripción, notas"
+            value={searchLamina}
+            onChange={(e) => setSearchLamina(e.target.value)}
+            className="pl-9 bg-white"
+          />
+        </div>
+        <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm">
+          <select
+            value={filterRepetida}
+            onChange={(e) => setFilterRepetida(e.target.value)}
+            className="outline-none text-gray-700 bg-transparent"
+          >
+            <option value="all">Normales y repetidas</option>
+            <option value="normal">Normales</option>
+            <option value="repetida">Repetidas</option>
+          </select>
+        </div>
+        {hayFiltros && (
+          <button
+            onClick={() => { setFilterAlbum('all'); setSearchLamina(''); setFilterRepetida('all') }}
+            className="text-xs text-gray-500 hover:text-gray-800 underline"
+          >
+            Limpiar filtros
+          </button>
+        )}
+      </div>
+
       <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -390,7 +456,9 @@ export default function StickersStockClient({ variantes, stickers, stickerProduc
             </thead>
             <tbody className="divide-y divide-gray-50">
               {filtered.length === 0 ? (
-                <tr><td colSpan={8} className="text-center py-8 text-gray-400">No hay láminas registradas</td></tr>
+                <tr><td colSpan={8} className="text-center py-8 text-gray-400">
+                  {hayFiltros ? 'No hay láminas que coincidan con los filtros' : 'No hay láminas registradas'}
+                </td></tr>
               ) : filtered.map((item) => {
                 const sticker = getSticker(item)
                 return (
@@ -406,7 +474,11 @@ export default function StickersStockClient({ variantes, stickers, stickerProduc
                             <ImageIcon className="h-4 w-4 text-gray-300" />
                           </div>
                         )}
-                        <span className="font-medium text-gray-900">#{item.productos?.numero}</span>
+                        <div>
+                          <span className="font-medium text-gray-900">#{item.productos?.numero}</span>
+                          {item.productos?.descripcion && <p className="text-xs text-gray-500">{item.productos.descripcion}</p>}
+                          {item.notas && <p className="text-xs text-gray-400 italic">{item.notas}</p>}
+                        </div>
                       </div>
                     </td>
                     <td className="px-4 py-3">

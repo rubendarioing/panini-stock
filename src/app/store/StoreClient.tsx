@@ -163,6 +163,10 @@ export default function StoreClient({ variantes, collectionTypes, varianteImagen
             : (esSobre ? 'Sobre' : 'Caja Sellada')
           badgeVariant = esSobre ? 'secondary' : 'warning'
           categoria = esSobre ? 'Sobres' : 'Cajas Selladas'
+        } else if (v.categoria_slug === 'set_actualizacion') {
+          badge = v.unidades_contenidas ? `Set · ${v.unidades_contenidas} láminas` : 'Set de actualización'
+          badgeVariant = 'default'
+          categoria = 'Sets de actualización'
         } else if (v.categoria_slug === 'lamina') {
           if (v.producto_numero) label = `Lámina #${v.producto_numero}`
           badge = v.es_repetida ? 'Repetida' : 'Normal'
@@ -200,6 +204,7 @@ export default function StoreClient({ variantes, collectionTypes, varianteImagen
     ...collectionTypes.map((t: any) => ({ value: t.nombre, label: t.nombre })),
     { value: 'Sobres', label: 'Sobres' },
     { value: 'Cajas Selladas', label: 'Cajas Selladas' },
+    { value: 'Sets de actualización', label: 'Sets de actualización' },
     { value: 'Láminas', label: 'Láminas' },
     { value: 'Combos', label: 'Combos' },
   ]
@@ -427,7 +432,7 @@ async function handleOrder(e: React.FormEvent) {
                     <div className="h-full flex flex-col items-center justify-center text-gray-300 gap-2">
                       {product.categoria_slug === 'album' && <BookOpen className="h-8 w-8 sm:h-10 sm:w-10" />}
                       {product.categoria_slug === 'lamina' && <Layers className="h-8 w-8 sm:h-10 sm:w-10" />}
-                      {(product.categoria_slug === 'combo' || product.categoria_slug === 'sobre' || product.categoria_slug === 'caja') && <Package2 className="h-8 w-8 sm:h-10 sm:w-10" />}
+                      {['combo', 'sobre', 'caja', 'set_actualizacion'].includes(product.categoria_slug) && <Package2 className="h-8 w-8 sm:h-10 sm:w-10" />}
                     </div>
                   )}
                   <div className="absolute top-1.5 left-1.5 sm:top-2 sm:left-2">

@@ -32,6 +32,7 @@ const CATEGORIAS = [
   { value: 'lamina', label: 'Lámina' },
   { value: 'sobre', label: 'Sobre' },
   { value: 'caja', label: 'Caja' },
+  { value: 'set_actualizacion', label: 'Set de actualización' },
 ]
 
 export default function CombosClient({ combos, variantes }: {
@@ -176,6 +177,18 @@ export default function CombosClient({ combos, variantes }: {
     }
 
     setOpen(false)
+    router.refresh()
+  }
+
+  async function handleDelete(combo: any) {
+    const aviso = combo.stock > 0
+      ? ` Sus ${combo.stock} combo(s) armados se desarman y los ítems vuelven al inventario.`
+      : ''
+    if (!confirm(`¿Eliminar el combo "${combo.nombre}"?${aviso}`)) return
+    // Si tiene ventas, el trigger de 034_combos_delete.sql lo rechaza con un
+    // mensaje explicando que se debe desactivar.
+    const { error } = await supabase.from('combos').delete().eq('id', combo.id)
+    if (error) alert(error.message)
     router.refresh()
   }
 
@@ -356,6 +369,9 @@ export default function CombosClient({ combos, variantes }: {
               </Button>
               <Button size="sm" variant={combo.activo ? 'destructive' : 'success'} onClick={() => toggleActive(combo)} className="flex-1">
                 {combo.activo ? 'Desactivar' : 'Activar'}
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => handleDelete(combo)} title="Eliminar combo" className="text-red-600 hover:text-red-700">
+                <Trash2 className="h-3.5 w-3.5" />
               </Button>
             </div>
             </div>

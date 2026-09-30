@@ -38,8 +38,43 @@ export function labelForVariante(v: VarianteLabelData | null | undefined): strin
       : ''
     return `${tipoLabel}${contenido} de ${p?.nombre ?? ''} ${p?.anio ?? ''}${col}`
   }
+  if (categoria === 'set_actualizacion') {
+    const contenido = v.unidades_contenidas ? ` (${v.unidades_contenidas} láminas)` : ''
+    return `Set de actualización${contenido} de ${p?.nombre ?? ''} ${p?.anio ?? ''}${col}`
+  }
   if (categoria === 'combo') {
     return `Combo: ${p?.nombre ?? ''}`
   }
   return p?.nombre ?? 'Producto'
+}
+
+// Tipos que se gestionan en Inventario → Sobres, cajas y sets: un producto por
+// álbum + tipo (productos.album_id + categoria_id).
+export const TIPOS_ACCESORIO: Record<string, {
+  label: string
+  plural: string
+  sufijoNombre: string
+  contenidoLabel: string
+  contenidoUnidad: string
+  contenidoPlaceholder: string
+  soloMundial?: boolean
+}> = {
+  sobre: {
+    label: 'Sobre', plural: 'sobres', sufijoNombre: 'Sobre',
+    contenidoLabel: 'Láminas por sobre', contenidoUnidad: 'láminas', contenidoPlaceholder: 'Ej: 5',
+  },
+  caja: {
+    label: 'Caja Sellada', plural: 'cajas selladas', sufijoNombre: 'Caja',
+    contenidoLabel: 'Sobres por caja', contenidoUnidad: 'sobres', contenidoPlaceholder: 'Ej: 36',
+  },
+  set_actualizacion: {
+    label: 'Set de actualización', plural: 'sets de actualización', sufijoNombre: 'Set de actualización',
+    contenidoLabel: 'Láminas en el set', contenidoUnidad: 'láminas', contenidoPlaceholder: 'Ej: 20',
+    soloMundial: true,
+  },
+}
+
+// Por ahora solo los Mundiales tienen set de actualización.
+export function esMundial(album: { collection_types?: { nombre?: string | null } | null } | null | undefined): boolean {
+  return /mundial/i.test(album?.collection_types?.nombre ?? '')
 }

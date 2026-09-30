@@ -15,9 +15,12 @@ import { formatCurrency, formatDate } from '@/lib/utils'
 import Link from 'next/link'
 import Image from 'next/image'
 import StockAdjustModal from '@/components/ui/stock-adjust-modal'
+import { TIPOS_ACCESORIO, esMundial } from '@/lib/product-labels'
 
 interface ExistingImage { id: number; url: string; orden: number }
 interface PendingImage  { file: File; preview: string }
+
+const tipoBadge: Record<string, string> = { sobre: 'secondary', caja: 'warning', set_actualizacion: 'default' }
 
 const condicionColors: Record<string, string> = {
   nuevo: 'success', sellado: 'default', usado: 'warning',
@@ -37,13 +40,14 @@ export default function AccesoriosClient({ variantes, albums }: { variantes: any
   const [removedIds, setRemovedIds]         = useState<number[]>([])
   const [loading, setLoading] = useState(false)
   const [filterTipo, setFilterTipo] = useState('all')
+  const [filterAlbum, setFilterAlbum] = useState('all')
   const [adjustItem, setAdjustItem] = useState<any>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const supabase = createClient()
   const router = useRouter()
 
-  // Sobres/cajas no tienen catálogo propio (a diferencia de albums/stickers): el
-  // "producto" (categoría Sobre/Caja de un álbum) se identifica por album_id +
+  // Sobres/cajas/sets no tienen catálogo propio (a diferencia de albums/stickers):
+  // el "producto" (categoría Sobre/Caja/Set de un álbum) se identifica por album_id +
   // categoria_id (único, ver 029_productos_album_id.sql), se crea la primera vez
   // que se registra stock para ese álbum+tipo y se reutiliza después.
   async function findOrCreateProducto(albumId: number, tipo: string, album: any): Promise<number | null> {
@@ -63,7 +67,7 @@ export default function AccesoriosClient({ variantes, albums }: { variantes: any
       album_id: albumId,
       type_id: album?.type_id ?? null,
       anio: album?.anio ?? null,
-      nombre: `${album?.nombre ?? ''} - ${tipo === 'sobre' ? 'Sobre' : 'Caja'}`,
+      nombre: `${album?.nombre ?? ''} - ${TIPOS_ACCESORIO[tipo]?.sufijoNombre ?? tipo}`,
       activo: true,
     }).select('id').single()
 
@@ -159,6 +163,11 @@ export default function AccesoriosClient({ variantes, albums }: { variantes: any
     const { data: { user } } = await supabase.auth.getUser()
 
     const album = albums.find((a: any) => String(a.id) === form.album_id)
+    if (TIPOS_ACCESORIO[form.tipo]?.soloMundial && !esMundial(album)) {
+      alert('El set de actualización solo aplica a álbumes de Mundiales.')
+      setLoading(false)
+      return
+    }
     const productoId = await findOrCreateProducto(Number(form.album_id), form.tipo, album)
     if (!productoId) { alert('Error al preparar el producto.'); setLoading(false); return }
 
@@ -221,9 +230,23 @@ export default function AccesoriosClient({ variantes, albums }: { variantes: any
     router.refresh()
   }
 
-  const filtered = filterTipo === 'all' ? variantes : variantes.filter(s => s.productos?.categorias?.slug === filterTipo)
-  const totalSobres = variantes.filter(s => s.productos?.categorias?.slug === 'sobre').reduce((a, s) => a + (s.inventario?.cantidad ?? 0), 0)
-  const totalCajas  = variantes.filter(s => s.productos?.categorias?.slug === 'caja').reduce((a, s) => a + (s.inventario?.cantidad ?? 0), 0)
+  // Álbumes con al menos un registro de sobres/cajas (productos.album_id, ver 029).
+  const albumIdsConStock = new Set(variantes.map((v) => v.productos?.album_id).filter(Boolean))
+  const albumsConStock = albums.filter((a: any) => albumIdsConStock.has(a.id))
+
+  const porAlbum = filterAlbum === 'all' ? variantes : variantes.filter(s => String(s.productos?.album_id) === filterAlbum)
+  const filtered = filterTipo === 'all' ? porAlbum : porAlbum.filter(s => s.productos?.categorias?.slug === filterTipo)
+  const totalSobres = porAlbum.filter(s => s.productos?.categorias?.slug === 'sobre').reduce((a, s) => a + (s.inventario?.cantidad ?? 0), 0)
+  const totalCajas  = porAlbum.filter(s => s.productos?.categorias?.slug === 'caja').reduce((a, s) => a + (s.inventario?.cantidad ?? 0), 0)
+  const totalSets   = porAlbum.filter(s => s.productos?.categorias?.slug === 'set_actualizacion').reduce((a, s) => a + (s.inventario?.cantidad ?? 0), 0)
+
+  // El set de actualización solo aplica a Mundiales.
+  const albumsDelForm = TIPOS_ACCESORIO[form.tipo]?.soloMundial ? albums.filter(esMundial) : albums
+  function cambiarTipo(tipo: string) {
+    const sigueValido = !TIPOS_ACCESORIO[tipo]?.soloMundial ||
+      esMundial(albums.find((a: any) => String(a.id) === form.album_id))
+    setForm({ ...form, tipo, album_id: sigueValido ? form.album_id : '' })
+  }
   const totalImages = existingImages.length + pendingImages.length
 
   return (
@@ -234,16 +257,30 @@ export default function AccesoriosClient({ variantes, albums }: { variantes: any
             <ArrowLeft className="h-5 w-5" />
           </Link>
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Stock de Accesorios</h1>
+            <h1 className="text-2xl font-bold text-gray-900">Sobres, cajas y sets</h1>
             <p className="text-gray-500 mt-0.5 text-sm">
               <span className="font-medium text-blue-600">{totalSobres} sobres</span>
               {' · '}
               <span className="font-medium text-orange-500">{totalCajas} cajas selladas</span>
+              {' · '}
+              <span className="font-medium text-purple-600">{totalSets} sets de actualización</span>
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <select
+            value={filterAlbum}
+            onChange={(e) => setFilterAlbum(e.target.value)}
+            className="h-9 max-w-[16rem] rounded-md border border-gray-300 bg-white px-3 text-sm text-gray-700 outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="all">Todos los álbumes</option>
+            {albumsConStock.map((a: any) => (
+              <option key={a.id} value={String(a.id)}>
+                {a.collection_types?.nombre ? `${a.collection_types.nombre} — ` : ''}{a.nombre} {a.anio ?? ''}
+              </option>
+            ))}
+          </select>
           <select
             value={filterTipo}
             onChange={(e) => setFilterTipo(e.target.value)}
@@ -252,6 +289,7 @@ export default function AccesoriosClient({ variantes, albums }: { variantes: any
             <option value="all">Todos</option>
             <option value="sobre">Sobres</option>
             <option value="caja">Cajas selladas</option>
+            <option value="set_actualizacion">Sets de actualización</option>
           </select>
 
           <Dialog open={open} onOpenChange={setOpen}>
@@ -266,19 +304,20 @@ export default function AccesoriosClient({ variantes, albums }: { variantes: any
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1.5">
                     <Label>Tipo</Label>
-                    <Select value={form.tipo} onValueChange={(v) => setForm({ ...form, tipo: v })}>
+                    <Select value={form.tipo} onValueChange={cambiarTipo}>
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="sobre">Sobre</SelectItem>
-                        <SelectItem value="caja">Caja Sellada</SelectItem>
+                        {Object.entries(TIPOS_ACCESORIO).map(([slug, t]) => (
+                          <SelectItem key={slug} value={slug}>{t.label}</SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>
                   <div className="space-y-1.5">
-                    <Label>{form.tipo === 'sobre' ? 'Láminas por sobre' : 'Sobres por caja'}</Label>
+                    <Label>{TIPOS_ACCESORIO[form.tipo]?.contenidoLabel}</Label>
                     <Input
                       type="number" min="1"
-                      placeholder={form.tipo === 'sobre' ? 'Ej: 5' : 'Ej: 36'}
+                      placeholder={TIPOS_ACCESORIO[form.tipo]?.contenidoPlaceholder}
                       value={form.cantidad_contenido}
                       onChange={(e) => setForm({ ...form, cantidad_contenido: e.target.value })}
                     />
@@ -290,13 +329,16 @@ export default function AccesoriosClient({ variantes, albums }: { variantes: any
                   <Select value={form.album_id} onValueChange={(v) => setForm({ ...form, album_id: v })}>
                     <SelectTrigger><SelectValue placeholder="Seleccionar álbum..." /></SelectTrigger>
                     <SelectContent>
-                      {albums.map((a) => (
+                      {albumsDelForm.map((a) => (
                         <SelectItem key={a.id} value={String(a.id)}>
                           {a.collection_types?.nombre} — {a.nombre} {a.anio}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
+                  {TIPOS_ACCESORIO[form.tipo]?.soloMundial && (
+                    <p className="text-xs text-gray-400">El set de actualización solo aplica a álbumes de Mundiales.</p>
+                  )}
                 </div>
 
                 {/* Imágenes múltiples */}
@@ -439,7 +481,7 @@ export default function AccesoriosClient({ variantes, albums }: { variantes: any
             </thead>
             <tbody className="divide-y divide-gray-50">
               {filtered.length === 0 ? (
-                <tr><td colSpan={10} className="text-center py-8 text-gray-400">No hay accesorios registrados</td></tr>
+                <tr><td colSpan={10} className="text-center py-8 text-gray-400">No hay sobres, cajas ni sets registrados</td></tr>
               ) : filtered.map((item) => {
                 const margen = item.precio_venta - item.precio_compra
                 const tipo = item.productos?.categorias?.slug
@@ -463,13 +505,13 @@ export default function AccesoriosClient({ variantes, albums }: { variantes: any
                       </div>
                     </td>
                     <td className="px-4 py-3">
-                      <Badge variant={tipo === 'sobre' ? 'secondary' : 'warning'}>
-                        {tipo === 'sobre' ? 'Sobre' : 'Caja Sellada'}
+                      <Badge variant={(tipoBadge[tipo] ?? 'secondary') as any}>
+                        {TIPOS_ACCESORIO[tipo]?.label ?? tipo}
                       </Badge>
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-500">
                       {item.unidades_contenidas
-                        ? `${item.unidades_contenidas} ${tipo === 'sobre' ? 'láminas' : 'sobres'}`
+                        ? `${item.unidades_contenidas} ${TIPOS_ACCESORIO[tipo]?.contenidoUnidad ?? ''}`
                         : '—'}
                     </td>
                     <td className="px-4 py-3">
@@ -510,7 +552,7 @@ export default function AccesoriosClient({ variantes, albums }: { variantes: any
           varianteId={adjustItem.id}
           item={{
             cantidad: adjustItem.inventario?.cantidad ?? 0,
-            nombre: `${adjustItem.productos?.categorias?.slug === 'sobre' ? 'Sobre' : 'Caja Sellada'} — ${adjustItem.productos?.nombre} ${adjustItem.productos?.anio}`,
+            nombre: `${TIPOS_ACCESORIO[adjustItem.productos?.categorias?.slug]?.label ?? ''} — ${adjustItem.productos?.nombre} ${adjustItem.productos?.anio}`,
             precio_compra: adjustItem.precio_compra,
             precio_venta: adjustItem.precio_venta,
           }}
