@@ -23,15 +23,18 @@ export default function StickersClient({ albums, stickers }: { albums: any[]; st
   const [rangeTo, setRangeTo] = useState('')
   const [rangePrefix, setRangePrefix] = useState('')
   const [numeroPrefix, setNumeroPrefix] = useState('')
+  const [rangeSerie, setRangeSerie] = useState('')
 
   // Individual
   const [singleNumero, setSingleNumero] = useState('')
   const [singleDesc, setSingleDesc] = useState('')
+  const [singleSerie, setSingleSerie] = useState('')
 
   // Edición
   const [editing, setEditing] = useState<any | null>(null)
   const [editNumero, setEditNumero] = useState('')
   const [editDesc, setEditDesc] = useState('')
+  const [editSerie, setEditSerie] = useState('')
   const [loadingEdit, setLoadingEdit] = useState(false)
 
   const supabase = createClient()
@@ -53,6 +56,13 @@ export default function StickersClient({ albums, stickers }: { albums: any[]; st
 
   const numeroRango = (n: number) => `${numeroPrefix}${n}`
 
+  // Series ya usadas en cualquier álbum (stickers.categoria), como sugerencias
+  // para no crear variantes del mismo nombre ("Coca Cola" vs "Coca-Cola").
+  const seriesExistentes = useMemo(
+    () => [...new Set(stickers.map((s) => s.categoria?.trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es')),
+    [stickers]
+  )
+
   async function handleBulk(e: React.FormEvent) {
     e.preventDefault()
     if (!selectedAlbum) return
@@ -70,6 +80,7 @@ export default function StickersClient({ albums, stickers }: { albums: any[]; st
           album_id: Number(selectedAlbum),
           numero,
           descripcion: rangePrefix ? `${rangePrefix} ${n}` : null,
+          categoria: rangeSerie.trim() || null,
         })
       }
     }
@@ -88,6 +99,7 @@ export default function StickersClient({ albums, stickers }: { albums: any[]; st
     if (errorMsg) alert(`Se crearon ${creadas} lámina(s) y luego falló: ${errorMsg}`)
     setRangePrefix('')
     setNumeroPrefix('')
+    setRangeSerie('')
     router.refresh()
   }
 
@@ -104,11 +116,13 @@ export default function StickersClient({ albums, stickers }: { albums: any[]; st
       album_id: Number(selectedAlbum),
       numero,
       descripcion: singleDesc || null,
+      categoria: singleSerie.trim() || null,
     })
     setLoadingSingle(false)
     if (error) { alert(`No se pudo agregar: ${error.message}`); return }
     setSingleNumero('')
     setSingleDesc('')
+    setSingleSerie('')
     router.refresh()
   }
 
@@ -116,6 +130,7 @@ export default function StickersClient({ albums, stickers }: { albums: any[]; st
     setEditing(s)
     setEditNumero(String(s.numero))
     setEditDesc(s.descripcion ?? '')
+    setEditSerie(s.categoria ?? '')
   }
 
   const editNumeroDuplicado = useMemo(() => {
@@ -133,7 +148,7 @@ export default function StickersClient({ albums, stickers }: { albums: any[]; st
     // El trigger trg_sync_producto_from_sticker propaga el cambio a `productos`.
     const { error } = await supabase
       .from('stickers')
-      .update({ numero, descripcion: editDesc.trim() || null })
+      .update({ numero, descripcion: editDesc.trim() || null, categoria: editSerie.trim() || null })
       .eq('id', editing.id)
     setLoadingEdit(false)
     if (error) {
@@ -316,10 +331,11 @@ export default function StickersClient({ albums, stickers }: { albums: any[]; st
                   <Input placeholder="Ej: Jugador, Escudo..." value={rangePrefix} onChange={(e) => setRangePrefix(e.target.value)} />
                 </div>
               </div>
+              <SerieInput value={rangeSerie} onChange={setRangeSerie} />
               {esMundial(album) && (
                 <button
                   type="button"
-                  onClick={() => { setNumeroPrefix('U'); setRangePrefix('Actualización'); setRangeFrom('1') }}
+                  onClick={() => { setNumeroPrefix('U'); setRangePrefix('Actualización'); setRangeSerie('Actualización'); setRangeFrom('1') }}
                   className="text-xs text-blue-600 hover:underline"
                 >
                   Usar para set de actualización (U1, U2… · &quot;Actualización N&quot;)
@@ -369,6 +385,7 @@ export default function StickersClient({ albums, stickers }: { albums: any[]; st
                 <Label>Descripción (opcional)</Label>
                 <Input placeholder="Ej: Messi — Argentina" value={singleDesc} onChange={(e) => setSingleDesc(e.target.value)} />
               </div>
+              <SerieInput value={singleSerie} onChange={setSingleSerie} />
               <Button
                 type="submit"
                 disabled={loadingSingle || !singleNumero || existingNumbers.has(singleNumero.trim().toUpperCase())}
@@ -381,6 +398,10 @@ export default function StickersClient({ albums, stickers }: { albums: any[]; st
           </div>
         </div>
       )}
+
+      <datalist id="series-laminas">
+        {seriesExistentes.map((s) => <option key={s} value={s} />)}
+      </datalist>
 
       {/* Tabla de láminas registradas */}
       {selectedAlbum && albumStickers.length > 0 && (
@@ -419,6 +440,7 @@ export default function StickersClient({ albums, stickers }: { albums: any[]; st
                 <Label>Descripción (opcional)</Label>
                 <Input value={editDesc} onChange={(e) => setEditDesc(e.target.value)} />
               </div>
+              <SerieInput value={editSerie} onChange={setEditSerie} />
               <div className="flex gap-2 pt-1">
                 <Button
                   type="button"
@@ -448,18 +470,36 @@ export default function StickersClient({ albums, stickers }: { albums: any[]; st
   )
 }
 
+// Serie de la lámina (stickers.categoria): vacío = regular. Se usa en la tienda
+// para filtrar (Coca-Cola, Extra Stickers, Actualización…).
+function SerieInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  return (
+    <div className="space-y-1.5">
+      <Label>Serie (opcional)</Label>
+      <Input
+        list="series-laminas"
+        placeholder="Vacío = regular. Ej: Coca-Cola, Extra Stickers"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      />
+    </div>
+  )
+}
+
 function StickersTable({ stickers, onSelect }: { stickers: any[]; onSelect: (s: any) => void }) {
   const sorted = [...stickers].sort((a, b) =>
     String(a.numero).localeCompare(String(b.numero), 'es', { numeric: true })
   )
 
   const groups = sorted.reduce((acc: Record<string, any[]>, s) => {
-    // Agrupa por prefijo de descripción; si no hay, por prefijo de número
-    // (ej. U1..U20 del set de actualización -> "Serie U").
+    // Agrupa por serie (stickers.categoria); si no tiene, por prefijo de
+    // descripción, y si tampoco, por prefijo de número (ej. U1..U20 -> "Serie U").
     const serie = String(s.numero).match(/^([A-Za-z]+)\d+$/)?.[1]?.toUpperCase()
-    const prefix = s.descripcion
-      ? s.descripcion.replace(/\s*\d+$/, '').trim() || 'Sin descripción'
-      : serie ? `Serie ${serie}` : 'Sin descripción'
+    const prefix = s.categoria?.trim()
+      ? `Serie: ${s.categoria.trim()}`
+      : s.descripcion
+        ? s.descripcion.replace(/\s*\d+$/, '').trim() || 'Sin descripción'
+        : serie ? `Serie ${serie}` : 'Sin descripción'
     if (!acc[prefix]) acc[prefix] = []
     acc[prefix].push(s)
     return acc

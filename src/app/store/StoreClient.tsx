@@ -11,6 +11,13 @@ import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import { labelForVariante } from '@/lib/product-labels'
 
+// Minúsculas y sin tildes, para que "actualizacion" encuentre "Actualización".
+function normalizar(texto: string): string {
+  return texto.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+}
+
+const SIN_SERIE = '__regulares__'
+
 interface CartItem {
   variante_id: number
   categoria_slug: string
@@ -35,6 +42,9 @@ export default function StoreClient({ variantes, collectionTypes, varianteImagen
   const [orderNumber, setOrderNumber] = useState('')
   const [search, setSearch] = useState('')
   const [filterCategory, setFilterCategory] = useState('all')
+  // Sub-filtros de "Láminas" (álbum y serie, ver 036_public_view_album_y_serie.sql).
+  const [filterAlbum, setFilterAlbum] = useState('all')
+  const [filterSerie, setFilterSerie] = useState('all')
   const [loading, setLoading] = useState(false)
   const [orderError, setOrderError] = useState<string | null>(null)
   const [gallery, setGallery] = useState<{images: string[], idx: number} | null>(null)
@@ -148,6 +158,7 @@ export default function StoreClient({ variantes, collectionTypes, varianteImagen
 
         let label = v.producto_nombre ?? 'Producto'
         let sublabel = [v.coleccion_nombre, v.anio].filter(Boolean).join(' ')
+        const serie: string | null = v.categoria_slug === 'lamina' ? (v.lamina_serie ?? null) : null
         let categoria = v.categoria_nombre
         let badge = ''
         let badgeVariant: string = 'secondary'
@@ -169,8 +180,11 @@ export default function StoreClient({ variantes, collectionTypes, varianteImagen
           categoria = 'Sets de actualización'
         } else if (v.categoria_slug === 'lamina') {
           if (v.producto_numero) label = `Lámina #${v.producto_numero}`
-          badge = v.es_repetida ? 'Repetida' : 'Normal'
-          badgeVariant = v.es_repetida ? 'warning' : 'secondary'
+          if (v.album_nombre) sublabel = [`${v.album_nombre} ${v.anio ?? ''}`.trim(), v.coleccion_nombre].filter(Boolean).join(' · ')
+          badge = serie
+            ? (v.es_repetida ? `${serie} · Repetida` : serie)
+            : (v.es_repetida ? 'Repetida' : 'Normal')
+          badgeVariant = serie ? 'default' : v.es_repetida ? 'warning' : 'secondary'
           categoria = 'Láminas'
         } else if (v.categoria_slug === 'combo') {
           badge = 'Combo'
@@ -179,9 +193,23 @@ export default function StoreClient({ variantes, collectionTypes, varianteImagen
           sublabel = v.producto_descripcion ?? ''
         }
 
+        const comboItems: { label: string; notas: string | null }[] =
+          v.categoria_slug === 'combo' ? (itemsPorCombo[v.id] ?? []) : []
+
         return {
           variante_id: v.id,
           categoria_slug: v.categoria_slug,
+          album_id: v.album_id ?? null,
+          album_label: v.album_nombre ? `${v.album_nombre} ${v.anio ?? ''}`.trim() : null,
+          anio: v.anio ?? 0,
+          numero: v.producto_numero ?? '',
+          serie,
+          // Todo el texto buscable; la búsqueda exige que cada palabra aparezca en alguna parte.
+          textoBusqueda: normalizar([
+            label, sublabel, v.producto_nombre, v.album_nombre, v.coleccion_nombre, v.anio,
+            v.producto_descripcion, v.notas, serie, v.es_repetida ? 'repetida' : '',
+            ...comboItems.flatMap((i) => [i.label, i.notas]),
+          ].filter(Boolean).join(' ')),
           label,
           sublabel,
           categoria,
@@ -190,7 +218,7 @@ export default function StoreClient({ variantes, collectionTypes, varianteImagen
           imagenes: imgs.length > 0 ? imgs : (mainImg ? [mainImg] : []),
           descripcion: v.categoria_slug === 'lamina' ? (v.producto_descripcion ?? '') : '',
           notas: v.notas ?? '',
-          comboItems: v.categoria_slug === 'combo' ? (itemsPorCombo[v.id] ?? []) : [],
+          comboItems,
           precio: v.precio_venta,
           stock,
           badge,
@@ -209,17 +237,40 @@ export default function StoreClient({ variantes, collectionTypes, varianteImagen
     { value: 'Combos', label: 'Combos' },
   ]
 
-  const filtered = products.filter((p) => {
-    const q = search.toLowerCase()
-    const matchSearch = search === '' ||
-      p.label.toLowerCase().includes(q) ||
-      p.sublabel?.toLowerCase().includes(q) ||
-      p.descripcion?.toLowerCase().includes(q) ||
-      p.notas?.toLowerCase().includes(q) ||
-      p.comboItems.some((item) => item.label.toLowerCase().includes(q) || item.notas?.toLowerCase().includes(q))
-    const matchCategory = filterCategory === 'all' || p.categoria === filterCategory
-    return matchSearch && matchCategory
-  })
+  // Opciones de los sub-filtros de láminas, construidas desde los datos: un
+  // álbum o una serie nueva aparece sola.
+  const laminas = products.filter((p) => p.categoria_slug === 'lamina')
+  const albumesLaminas = [...new Map(
+    laminas.filter((p) => p.album_id).map((p) => [String(p.album_id), { label: p.album_label ?? '', anio: p.anio }])
+  ).entries()].sort((a, b) => b[1].anio - a[1].anio || a[1].label.localeCompare(b[1].label, 'es'))
+  const laminasDelAlbum = filterAlbum === 'all' ? laminas : laminas.filter((p) => String(p.album_id) === filterAlbum)
+  const seriesLaminas = [...new Set(laminasDelAlbum.map((p) => p.serie).filter(Boolean) as string[])]
+    .sort((a, b) => a.localeCompare(b, 'es'))
+  const hayRegulares = laminasDelAlbum.some((p) => !p.serie)
+
+  function cambiarCategoria(value: string) {
+    setFilterCategory(value)
+    setFilterAlbum('all')
+    setFilterSerie('all')
+  }
+
+  const palabras = normalizar(search).split(/\s+/).filter(Boolean)
+  const filtered = products
+    .filter((p) => {
+      const matchSearch = palabras.every((w) => p.textoBusqueda.includes(w.replace(/^#/, '')))
+      const matchCategory = filterCategory === 'all' || p.categoria === filterCategory
+      const esFiltroLaminas = filterCategory === 'Láminas'
+      const matchAlbum = !esFiltroLaminas || filterAlbum === 'all' || String(p.album_id) === filterAlbum
+      const matchSerie = !esFiltroLaminas || filterSerie === 'all' ||
+        (filterSerie === SIN_SERIE ? !p.serie : p.serie === filterSerie)
+      return matchSearch && matchCategory && matchAlbum && matchSerie
+    })
+    // En "Láminas": por álbum (más reciente primero) y luego por número (1, 2, 10…).
+    .sort((a, b) => filterCategory !== 'Láminas'
+      ? 0
+      : b.anio - a.anio ||
+        String(a.album_label).localeCompare(String(b.album_label), 'es') ||
+        String(a.numero).localeCompare(String(b.numero), 'es', { numeric: true }))
 
   function addToCart(product: any) {
     setCart((prev) => {
@@ -384,7 +435,7 @@ async function handleOrder(e: React.FormEvent) {
       <div className="relative mb-3">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
         <Input
-          placeholder="Buscar producto..."
+          placeholder="Buscar: coca cola 2006, messi qatar, #245..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           className="pl-9"
@@ -397,7 +448,7 @@ async function handleOrder(e: React.FormEvent) {
           {categories.map((cat) => (
             <button
               key={cat.value}
-              onClick={() => setFilterCategory(cat.value)}
+              onClick={() => cambiarCategoria(cat.value)}
               className={`flex-shrink-0 px-3 py-1.5 rounded-full text-xs sm:text-sm font-medium transition-colors whitespace-nowrap ${
                 filterCategory === cat.value
                   ? 'bg-[#003DA5] text-white'
@@ -409,6 +460,35 @@ async function handleOrder(e: React.FormEvent) {
           ))}
         </div>
       </div>
+
+      {/* Sub-filtros de láminas */}
+      {filterCategory === 'Láminas' && (albumesLaminas.length > 0 || seriesLaminas.length > 0) && (
+        <div className="flex flex-wrap gap-2 -mt-2 mb-5">
+          <select
+            value={filterAlbum}
+            onChange={(e) => { setFilterAlbum(e.target.value); setFilterSerie('all') }}
+            className="h-9 max-w-full rounded-lg border border-gray-200 bg-white px-3 text-xs sm:text-sm text-gray-700 outline-none focus:border-[#003DA5]"
+          >
+            <option value="all">Todos los álbumes</option>
+            {albumesLaminas.map(([id, a]) => (
+              <option key={id} value={id}>{a.label}</option>
+            ))}
+          </select>
+          {seriesLaminas.length > 0 && (
+            <select
+              value={filterSerie}
+              onChange={(e) => setFilterSerie(e.target.value)}
+              className="h-9 max-w-full rounded-lg border border-gray-200 bg-white px-3 text-xs sm:text-sm text-gray-700 outline-none focus:border-[#003DA5]"
+            >
+              <option value="all">Todas las series</option>
+              {hayRegulares && <option value={SIN_SERIE}>Regulares</option>}
+              {seriesLaminas.map((serie) => (
+                <option key={serie} value={serie}>{serie}</option>
+              ))}
+            </select>
+          )}
+        </div>
+      )}
 
       {/* Grid de productos */}
       {filtered.length === 0 ? (

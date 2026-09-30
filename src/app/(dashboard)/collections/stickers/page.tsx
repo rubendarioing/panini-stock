@@ -12,7 +12,7 @@ export default async function StickersCatalogPage() {
       .order('anio', { ascending: false }),
     supabase
       .from('stickers')
-      .select('id, numero, descripcion, album_id')
+      .select('id, numero, descripcion, categoria, album_id')
       .order('album_id')
       .order('numero'),
     // Las imágenes viven en el modelo unificado (las sube "Láminas sueltas"):
