@@ -13,6 +13,7 @@ import {
   Layers,
   Archive,
   ChevronLeft,
+  Settings,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { createClient } from '@/lib/supabase/client'
@@ -33,6 +34,7 @@ const navItems = [
 
 const adminItems = [
   { href: '/users', label: 'Usuarios', icon: Users },
+  { href: '/settings', label: 'Configuración', icon: Settings },
 ]
 
 interface SidebarProps {
