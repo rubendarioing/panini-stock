@@ -8,7 +8,7 @@ export default async function SalesPage() {
   // Antes de listar, para que los pedidos abandonados ya aparezcan cancelados.
   await expirarPedidosPendientes()
 
-  const [{ data: sales }, { data: variantes }] = await Promise.all([
+  const [{ data: sales }, { data: variantes }, { data: comboComponentes }] = await Promise.all([
     supabase
       .from('sales')
       .select(`
@@ -16,7 +16,7 @@ export default async function SalesPage() {
         sale_items_v2 (
           *,
           producto_variantes (
-            estado, es_repetida, unidades_contenidas,
+            estado, es_repetida, unidades_contenidas, notas, legacy_table, legacy_id,
             productos ( nombre, anio, numero, descripcion, categorias ( nombre, slug ), collection_types ( nombre ) )
           )
         ),
@@ -32,12 +32,23 @@ export default async function SalesPage() {
         inventario ( cantidad ),
         productos ( nombre, anio, numero, descripcion, categorias ( slug ), collection_types ( nombre ) )
       `),
+    // Ítems de cada combo, para detallarlos en las ventas que incluyen combos.
+    supabase
+      .from('combo_componentes')
+      .select(`
+        combo_id, cantidad,
+        producto_variantes (
+          estado, es_repetida, unidades_contenidas, notas,
+          productos ( nombre, anio, numero, descripcion, categorias ( slug ), collection_types ( nombre ) )
+        )
+      `),
   ])
 
   return (
     <SalesClient
       sales={sales ?? []}
       variantes={variantes ?? []}
+      comboComponentes={comboComponentes ?? []}
     />
   )
 }
