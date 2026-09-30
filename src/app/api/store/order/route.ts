@@ -3,6 +3,18 @@ import { NextResponse } from 'next/server'
 import { Resend } from 'resend'
 import { labelForVariante } from '@/lib/product-labels'
 import { getWompiIntegritySignature } from '@/lib/wompi'
+import { expirarPedidosPendientes } from '@/lib/expire-orders'
+
+// Los datos del cliente vienen del formulario público de la tienda y se
+// insertan en el HTML del correo: escaparlos evita inyectar marcado.
+function escapeHtml(value: string | null | undefined): string {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
 
 type OrderItem = {
   variante_id: number
@@ -27,6 +39,10 @@ export async function POST(request: Request) {
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   )
 
+  // Liberar pedidos abandonados antes de validar: un pedido vencido de este
+  // mismo teléfono no debe bloquearlo, y su stock vuelve a estar disponible.
+  await expirarPedidosPendientes(supabase)
+
   // Verificar si ya tiene un pedido pendiente con ese teléfono
   const { data: pedidoPendiente } = await supabase
     .from('sales')
@@ -48,7 +64,7 @@ export async function POST(request: Request) {
   const { data: variantes } = await supabase
     .from('producto_variantes')
     .select(`
-      id, estado, es_repetida, unidades_contenidas,
+      id, estado, es_repetida, unidades_contenidas, notas, legacy_table, legacy_id,
       inventario ( cantidad ),
       productos ( nombre, anio, descripcion, categorias ( slug ), collection_types ( nombre ) )
     `)
@@ -179,23 +195,59 @@ export async function POST(request: Request) {
       new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(n)
 
     const emoji: Record<string, string> = { album: '📘', lamina: '🃏', combo: '🎁', sobre: '📦', caja: '📦' }
+
+    // Ítems de los combos del pedido, para detallar qué hay que despachar.
+    const comboIds = [...new Set(
+      items.map((i) => varianteMap.get(i.variante_id))
+        .filter((v: any) => v?.legacy_table === 'combos')
+        .map((v: any) => v.legacy_id)
+    )]
+    const { data: componentes } = comboIds.length
+      ? await supabase
+          .from('combo_componentes')
+          .select(`combo_id, cantidad, producto_variantes (
+            estado, es_repetida, unidades_contenidas, notas,
+            productos ( nombre, anio, numero, descripcion, categorias ( slug ), collection_types ( nombre ) )
+          )`)
+          .in('combo_id', comboIds)
+      : { data: [] as any[] }
+
+    const notaHtml = (nota: string | null | undefined) => nota
+      ? `<div style="font-size:12px;color:#6b7280;font-style:italic;margin-top:2px">${escapeHtml(nota)}</div>`
+      : ''
+
     const itemsHtml = items.map((i) => {
       const v = varianteMap.get(i.variante_id)
       const categoria = v?.productos?.categorias?.slug ?? 'producto'
+      const incluidos = v?.legacy_table === 'combos'
+        ? (componentes ?? []).filter((c: any) => c.combo_id === v.legacy_id)
+        : []
+      const incluidosHtml = incluidos.length
+        ? `<div style="margin:6px 0 0 26px;padding-left:8px;border-left:2px solid #e5e7eb">
+            <div style="font-size:12px;color:#374151;font-weight:600">Incluye${i.cantidad > 1 ? ` (total para ${i.cantidad} combos)` : ''}:</div>
+            ${incluidos.map((c: any) => `
+              <div style="font-size:12px;color:#374151;margin-top:3px">
+                ${c.cantidad * i.cantidad}x ${escapeHtml(labelForVariante(c.producto_variantes))}
+                ${notaHtml(c.producto_variantes?.notas)}
+              </div>`).join('')}
+          </div>`
+        : ''
       return `<tr>
         <td style="padding:8px;border-bottom:1px solid #f0f0f0">
           <span style="font-size:16px">${emoji[categoria] ?? '📦'}</span>
-          <span style="font-size:13px;color:#1a1a1a;margin-left:6px">${labelForVariante(v)}</span>
+          <span style="font-size:13px;color:#1a1a1a;margin-left:6px">${escapeHtml(labelForVariante(v))}</span>
+          ${categoria === 'combo' ? '' : `<div style="margin-left:26px">${notaHtml(v?.notas)}</div>`}
+          ${incluidosHtml}
         </td>
-        <td style="padding:8px;border-bottom:1px solid #f0f0f0;text-align:center;font-size:13px">${i.cantidad}</td>
-        <td style="padding:8px;border-bottom:1px solid #f0f0f0;text-align:right;font-size:13px">${formatCurrency(i.subtotal)}</td>
+        <td style="padding:8px;border-bottom:1px solid #f0f0f0;text-align:center;font-size:13px;vertical-align:top">${i.cantidad}</td>
+        <td style="padding:8px;border-bottom:1px solid #f0f0f0;text-align:right;font-size:13px;vertical-align:top">${formatCurrency(i.subtotal)}</td>
       </tr>`
     }).join('')
 
     await resend.emails.send({
       from: 'Panini Stock <onboarding@resend.dev>',
       to: process.env.ADMIN_EMAIL!,
-      subject: `🛒 Nuevo pedido #${sale.id} — ${nombre}`,
+      subject: `🛒 Nuevo pedido #${sale.id} — ${nombre.replace(/[\r\n]/g, ' ')}`,
       html: `
         <div style="font-family:sans-serif;max-width:560px;margin:0 auto;color:#1a1a1a">
           <div style="background:#003DA5;padding:24px 32px;border-radius:12px 12px 0 0">
@@ -205,12 +257,12 @@ export async function POST(request: Request) {
           <div style="background:#fff;padding:24px 32px;border:1px solid #e5e7eb;border-top:none">
             <h2 style="font-size:15px;margin:0 0 12px;color:#374151">Datos del cliente</h2>
             <table style="width:100%;font-size:14px;border-collapse:collapse;margin-bottom:20px">
-              <tr><td style="padding:4px 0;color:#6b7280;width:120px">Nombre</td><td style="padding:4px 0;font-weight:600">${nombre}</td></tr>
-              <tr><td style="padding:4px 0;color:#6b7280">WhatsApp</td><td style="padding:4px 0"><a href="https://wa.me/${telefono}" style="color:#003DA5">${telefono}</a></td></tr>
-              <tr><td style="padding:4px 0;color:#6b7280">Email</td><td style="padding:4px 0">${email}</td></tr>
-              <tr><td style="padding:4px 0;color:#6b7280">Ciudad</td><td style="padding:4px 0">${ciudad}</td></tr>
-              <tr><td style="padding:4px 0;color:#6b7280">Dirección</td><td style="padding:4px 0">${direccion}</td></tr>
-              <tr><td style="padding:4px 0;color:#6b7280">Notas</td><td style="padding:4px 0">${notas}</td></tr>
+              <tr><td style="padding:4px 0;color:#6b7280;width:120px">Nombre</td><td style="padding:4px 0;font-weight:600">${escapeHtml(nombre)}</td></tr>
+              <tr><td style="padding:4px 0;color:#6b7280">WhatsApp</td><td style="padding:4px 0"><a href="https://wa.me/${encodeURIComponent(telefono)}" style="color:#003DA5">${escapeHtml(telefono)}</a></td></tr>
+              <tr><td style="padding:4px 0;color:#6b7280">Email</td><td style="padding:4px 0">${escapeHtml(email)}</td></tr>
+              <tr><td style="padding:4px 0;color:#6b7280">Ciudad</td><td style="padding:4px 0">${escapeHtml(ciudad)}</td></tr>
+              <tr><td style="padding:4px 0;color:#6b7280">Dirección</td><td style="padding:4px 0">${escapeHtml(direccion)}</td></tr>
+              <tr><td style="padding:4px 0;color:#6b7280">Notas</td><td style="padding:4px 0">${escapeHtml(notas)}</td></tr>
             </table>
             <h2 style="font-size:15px;margin:0 0 12px;color:#374151">Productos</h2>
             <table style="width:100%;font-size:14px;border-collapse:collapse;margin-bottom:20px">

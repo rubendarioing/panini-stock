@@ -1,8 +1,14 @@
+import { after } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { expirarPedidosPendientes } from '@/lib/expire-orders'
 import StoreClient from './StoreClient'
 
 export default async function StorePage() {
   const supabase = await createClient()
+
+  // Libera stock de pedidos abandonados sin demorar la página (se verá en la
+  // siguiente carga o por Realtime).
+  after(() => expirarPedidosPendientes())
 
   const [
     { data: variantes },

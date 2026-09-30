@@ -168,8 +168,26 @@ export default function SalesClient({ sales, variantes }: {
       alert('Solo se pueden cancelar ventas en estado pendiente.')
       return
     }
-    if (!confirm('¿Cancelar esta venta?')) return
-    await supabase.from('sales').update({ estado: 'cancelado' }).eq('id', sale.id)
+    if (!confirm('¿Cancelar esta venta? El stock reservado vuelve al inventario.')) return
+
+    // Condicionado a 'pendiente': si el webhook de Wompi la procesó en paralelo,
+    // no se cancela ni se repone dos veces.
+    const { data: cancelada, error } = await supabase
+      .from('sales').update({ estado: 'cancelado' })
+      .eq('id', sale.id).eq('estado', 'pendiente')
+      .select('id')
+    if (error) { alert(`No se pudo cancelar: ${error.message}`); return }
+    if (!cancelada?.length) {
+      alert('La venta cambió de estado (posiblemente Wompi ya la procesó). Recarga la página.')
+      router.refresh()
+      return
+    }
+
+    // Los pedidos pendientes de la tienda reservan stock al crearse
+    // (api/store/order); al cancelar se repone igual que en el webhook.
+    for (const item of sale.sale_items_v2 ?? []) {
+      await supabase.rpc('reponer_inventario', { p_variante_id: item.variante_id, p_cantidad: item.cantidad })
+    }
     router.refresh()
   }
 

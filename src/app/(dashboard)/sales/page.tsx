@@ -1,8 +1,12 @@
 import { createClient } from '@/lib/supabase/server'
+import { expirarPedidosPendientes } from '@/lib/expire-orders'
 import SalesClient from './SalesClient'
 
 export default async function SalesPage() {
   const supabase = await createClient()
+
+  // Antes de listar, para que los pedidos abandonados ya aparezcan cancelados.
+  await expirarPedidosPendientes()
 
   const [{ data: sales }, { data: variantes }] = await Promise.all([
     supabase
